@@ -1,0 +1,23 @@
+version: '3'
+
+services:
+  backend:
+    build:
+      context: configs/backend
+    image: soundhound-backend
+    container_name: soundhound-backend
+    hostname: backend
+    command: python main.py
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+
+  proxy:
+    build:
+      context: configs/proxy
+    image: soundhound-proxy
+    container_name: soundhound-proxy
+    hostname: proxy
+    env_file:
+      - .env
