@@ -4,15 +4,14 @@ set -e
 
 echo "Starting up bot backend"
 
-echo "Waiting for Privoxy"
+echo "Waiting for Redis"
 wait-for-it.sh \
-    --host=proxy \
-    --port=8118 \
-    --timeout=15 \
+    --host=redis \
+    --port=6379 \
+    --timeout=10 \
     --strict \
     -- \
-    echo "Privoxy is up"
+    echo "Redis is up"
 
-sleep 10
 echo "Starting $@"
 exec $@

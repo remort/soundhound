@@ -1,23 +1,32 @@
 version: '3'
 
 services:
-  backend:
+  api:
     build:
       context: configs/backend
-    image: soundhound-backend
-    container_name: soundhound-backend
-    hostname: backend
-    command: python main.py
+    command: gunicorn -c /etc/gunicorn.py app.main:http_app_factory
+    ports:
+      - 7000:8000
     volumes:
-      - .:/app
+      - ./app:/app
     env_file:
       - .env
 
-  proxy:
-    build:
-      context: configs/proxy
-    image: soundhound-proxy
-    container_name: soundhound-proxy
-    hostname: proxy
-    env_file:
-      - .env
+#  proxy:
+#    build:
+#      context: configs/proxy
+#    image: soundhound-proxy
+#    container_name: soundhound-proxy
+#    hostname: proxy
+#    env_file:
+#      - .env
+
+  redis:
+    image: redis:5-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
