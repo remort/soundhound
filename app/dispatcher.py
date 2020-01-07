@@ -1,16 +1,21 @@
 import logging
 from logging import Logger
 import pickle
-from typing import List, Tuple, Any, Optional
+from typing import List, Tuple
 
 from aioredis.commands import Redis
 
 from app.actions_dict import actions
 from app.audiohandler import AudioHandler
 from app.config import OPERATION_LOCK_TIMEOUT, USAGE_INFO
-from app.exceptions.api import RoutingError, ParametersValidationError, SoundHoundError, NotImplementedYetError
+from app.exceptions.api import (
+    NotImplementedYetError,
+    ParametersValidationError,
+    RoutingError,
+    SoundHoundError,
+)
 from app.serializers.telegram import Audio
-from app.serializers.user_state import UserStateSchema, UserStateModel
+from app.serializers.user_state import UserStateModel, UserStateSchema
 from app.tg_api import TelegramAPI
 
 log: Logger = logging.getLogger(__name__)
@@ -28,19 +33,14 @@ class Dispatcher:
         with await self.redis as redis_conn:
             # Потому что у aioredis нет lock
             await redis_conn.set(f'{user_id}-lock', '1', expire=OPERATION_LOCK_TIMEOUT)
-            log.warning('LOCK SET')
-            if await redis_conn.exists(f'{user_id}-lock'):
-                log.warning('LOCK EXISTS')
             try:
                 await self._dispatch(user_id, update)
             except SoundHoundError as exc:
                 await self.handle_error(user_id, exc)
             except Exception as exc:
                 log.exception('Generic exception happened')
-                raise exc
             finally:
                 await redis_conn.delete(f'{user_id}-lock')
-                log.warning('LOCK DELETED')
                 log.debug(f'Message from user {user_id} handled')
 
     async def initiate_task(self, user_id):
@@ -83,31 +83,19 @@ class Dispatcher:
 
                 elif not user_state.audio_file_sent:
                     audio_meta: dict = self._validate_audio_file(update)
-                    log.debug(f'Audio file meta: {audio_meta}')
                     self._validate_file_duration(audio_meta['duration'], user_state.time_range)
                     audio_meta['duration'] = user_state.time_range[1] - user_state.time_range[0]
 
-                    file: object
-                    file = await self.tg_api.download_file(audio_meta, 'audio')
+                    file: object = await self.tg_api.download_file(audio_meta, 'audio')
 
                     user_state.audio_meta = audio_meta
                     user_state.audio_file = file.name
                     await self._save_state(user_id, user_state)
 
-                    log.debug(user_state.time_range)
+                    mod_file: bytes = await self.audio.handle_file(file, user_state.action, user_state.time_range)
 
-                    mod_file: bytes = await self.audio.handle_file(
-                        file,
-                        user_state.action,
-                        user_state.time_range,
-                    )
-
-                    await self.tg_api.upload_file(
-                        user_id,
-                        mod_file,
-                        audio_meta,
-                        True if user_state.action == 'makevoice' else False,
-                    )
+                    as_voice: bool = True if user_state.action == 'makevoice' else False
+                    await self.tg_api.upload_file(user_id, mod_file, audio_meta, as_voice)
 
                     await self._clean_state(user_id)
                     return

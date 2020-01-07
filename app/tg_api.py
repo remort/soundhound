@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional, Tuple
 
-from aiohttp import ClientConnectorError, ClientResponseError, ClientSession
+from aiohttp import ClientConnectorError, ClientSession, ContentTypeError
 from aiohttp.formdata import FormData
 
 from app.config import SERVER_NAME, TOKEN
@@ -51,25 +51,21 @@ class TelegramAPI:
     ) -> dict:
         url: str = os.path.join(self.api_url, path)
         log.debug(f'Request to TG API: {url}, params: {params}')
-        async with self.session.request(
-                method=method,
-                url=url,
-                params=params,
-                data=form_data,
-        ) as response:
-            try:
-                resp: dict = await response.json()
-            except ClientResponseError:
-                raise TGApiError(f'Bad status code from Telegram. Status: {response.status}', resp)
-            except (CancelledError, ClientConnectorError) as exc:
-                raise TGNetworkError('Request to Telegram API failed due to network issues.', resp, exc)
-            except Exception as exc:
-                raise TGNetworkError('Request to Telegram API failed.', resp, exc)
+        try:
+            async with self.session.request(method=method, url=url, params=params, data=form_data) as response:
+                try:
+                    resp: dict = await response.json()
+                except ContentTypeError:
+                    raise TGApiError('Unable to parse response body', response)
+        except (CancelledError, ClientConnectorError) as exc:
+            raise TGNetworkError('Request to Telegram API failed due to network issues.', exc)
+        except Exception as exc:
+            raise TGNetworkError('Request to Telegram API failed.', exc)
 
-            if not resp.get('ok'):
-                raise TGApiError(f"Telegram API returned error: {resp['error']}.", resp)
+        if not resp.get('ok'):
+            raise TGApiError(f"Telegram API returned error: {resp['error_code']}: {resp['description']}.", resp)
 
-            return resp['result']
+        return resp['result']
 
     async def set_webhook(self) -> str:
         """Инициализация вебхука"""

@@ -50,7 +50,7 @@ async def http_app_factory() -> Application:
 
     app['redis'] = redis_pool
     app['http_client_session'] = ClientSession(
-        raise_for_status=True, read_timeout=180, conn_timeout=180, trust_env=True,
+        raise_for_status=False, read_timeout=180, conn_timeout=180, trust_env=True,
     )
     app['tg_api']: TelegramAPI = TelegramAPI(app['http_client_session'])
     app['dispatcher'] = Dispatcher(app['redis'], app['tg_api'], app['http_client_session'])
