@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List
 from dataclasses import dataclass, field
 
 
@@ -14,7 +14,7 @@ class Actions:
     action_map: field(default_factory=dict)
 
 
-action_list = [
+action_list: List[Action] = [
     Action(
         'crop',
         'Cut audio by time',
@@ -32,4 +32,4 @@ action_list = [
     ),
 ]
 
-actions = Actions({x.name: x for x in action_list})
+actions: Actions = Actions({x.name: x for x in action_list})

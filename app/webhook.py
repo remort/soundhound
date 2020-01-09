@@ -1,23 +1,36 @@
 from aiojobs.aiohttp import spawn
 import logging
 from logging import Logger
-from typing import Any, Dict
+from typing import Optional
 
-from aiohttp.web import View, json_response, Response
+from aiohttp.web import View, Response
 from marshmallow.exceptions import ValidationError
 
+from app.config import DEBUGLEVEL
 from app.exceptions.api import UpdateValidationError
 from app.serializers.telegram import Update
 
 log: Logger = logging.getLogger(__name__)
-logging.basicConfig(level='DEBUG')
+logging.basicConfig(level=DEBUGLEVEL)
 
 
 class WebhookHandler(View):
+    """
+    Webhook-хэндлер бота. Принимает входящее от Telegram API сообщение (update).
+    Сериализует его, запускает бэкграунд корутину (asyncio job) который принимает решение о дальнейшем действии бота,
+    и возвращает Response() не дожидаясь выполнения джоба. Вся дальнейшая работа бота происходит в фоновом джобе.
+    Dispatch-джоб устанавливает lock в redis для этого пользователя и снимает его по завершении.
+    Т.о. все входящие сообщения от этого пользователя во время действия lock отвергаются хэндлером.
+    """
     @staticmethod
-    def validate_update(update_data):
-        message = None
-        from_obj = None
+    def validate_user(update_data: dict) -> int:
+        """
+        Успешная сериализация update в теории может не иметь информации об отправителе сообщения. Поэтому тут происходит
+        поиск и валидация информации об отправителе сообщения в пришедшем от Telegram объекте update.
+        Возвращает telegram user id отправителя.
+        """
+        message: Optional[dict] = None
+        from_obj: Optional[dict] = None
         if update_data.get('message'):
             message = update_data.get('message')
             from_obj = message.get('from')
@@ -36,22 +49,28 @@ class WebhookHandler(View):
         return from_obj['id']
 
     @staticmethod
-    def find_sender(data):
+    def find_sender(data: dict) -> Optional[int]:
+        """Используется для нахождения отправителя в случае ошибки сериализации."""
+        # TODO: отрефакторить и объединить с validate_user
         if data.get('callback_query'):
-            data = data['callback_query']
+            data: dict = data['callback_query']
 
         if data.get('message'):
             if data['message'].get('from'):
                 if data['message']['from'].get('id'):
                     return data['message']['from']['id']
 
-    async def post(self) -> json_response:
-        data: Dict[Any, Any] = await self.request.json()
+    async def post(self) -> Response:
+        """
+        POST-хэндлер webhook бота.
+        Отвечает по URL, который устанавливается как webhook URL боту при старте Aiohttp Application.
+        """
+        data: dict = await self.request.json()
 
         if data.get('message'):
-            log.debug('Incoming message')
+            log.debug('Incoming Message')
         else:
-            log.debug('Incoming callback query')
+            log.debug('Incoming Callback Query')
 
         try:
             update = Update().load(data)
@@ -65,7 +84,7 @@ class WebhookHandler(View):
             log.exception('Marshmallow serialization failed.')
             return Response()
 
-        user_id = self.validate_update(update)
+        user_id: int = self.validate_user(update)
 
         log.debug(f'Incoming message from {user_id}')
         with await self.request.app['redis'] as conn:

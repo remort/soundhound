@@ -7,7 +7,7 @@ from aioredis.commands import Redis
 
 from app.actions_dict import actions
 from app.audiohandler import AudioHandler
-from app.config import OPERATION_LOCK_TIMEOUT, USAGE_INFO
+from app.config import DEBUGLEVEL, OPERATION_LOCK_TIMEOUT, USAGE_INFO
 from app.exceptions.api import (
     NotImplementedYetError,
     ParametersValidationError,
@@ -19,7 +19,7 @@ from app.serializers.user_state import UserStateModel, UserStateSchema
 from app.tg_api import TelegramAPI
 
 log: Logger = logging.getLogger(__name__)
-logging.basicConfig(level='DEBUG')
+logging.basicConfig(level=DEBUGLEVEL)
 
 
 class Dispatcher:

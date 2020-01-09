@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from aiohttp import ClientConnectorError, ClientSession, ContentTypeError
 from aiohttp.formdata import FormData
 
-from app.config import SERVER_NAME, TOKEN
+from app.config import DEBUGLEVEL, SERVER_NAME, TOKEN
 from app.exceptions.api import (
     FileSizeError,
     TGApiError,
@@ -18,16 +18,16 @@ from app.exceptions.api import (
 )
 
 log = logging.getLogger(__name__)
-logging.basicConfig(level='DEBUG')
+logging.basicConfig(level=DEBUGLEVEL)
 
 # TODO: проверить работу со всеми этими файлами
-SUPPORTED_PICTURE_SUFFIXES = ('.jpg', '.jpeg', '.png')
+SUPPORTED_PICTURE_SUFFIXES: Tuple[str] = ('.jpg', '.jpeg', '.png')
 
 
 class TelegramAPI:
-    SIZE_1MB = 1048576
-    SIZE_10MB = 10485760
-    SIZE_50MB = 52428800
+    SIZE_1MB: int = 1048576
+    SIZE_10MB: int = 10485760
+    SIZE_50MB: int = 52428800
 
     def __init__(self, http_client_session: ClientSession):
         self.token: str = TOKEN
@@ -49,6 +49,7 @@ class TelegramAPI:
             params: Optional[Dict[str, Any]] = None,
             form_data: Optional[Dict[str, Any]] = None,
     ) -> dict:
+        """Внутренний метод реализующий запрос к Telegram API. Другие методы используют его. Кроме зарузки файла."""
         url: str = os.path.join(self.api_url, path)
         log.debug(f'Request to TG API: {url}, params: {params}')
         try:
@@ -68,7 +69,7 @@ class TelegramAPI:
         return resp['result']
 
     async def set_webhook(self) -> str:
-        """Инициализация вебхука"""
+        """Инициализация вебхука."""
         resp: dict = await self._request('getWebhookInfo')
         if resp.get('url') != self.webhook_url:
             await self._request('setWebhook', params={'url': self.webhook_url})
@@ -76,6 +77,7 @@ class TelegramAPI:
 
     @staticmethod
     def _inline_keyboard_from_buttons(buttons: Optional[List[Tuple[str]]]):
+        """Принимает list tuple объектов ('id кнопки', 'title кнопки') и возвращает Telegram Inline Keyboard из них."""
         if not buttons:
             return ''
         return json.dumps({
@@ -83,6 +85,7 @@ class TelegramAPI:
         })
 
     async def send_message(self, user_id: int, message: str, buttons: Optional[List[Tuple[str]]] = None) -> dict:
+        """Публичный метод отправки текстового сообщения пользователю."""
         return await self._request(
             'sendMessage',
             params={
@@ -93,14 +96,14 @@ class TelegramAPI:
             }
         )
 
-    async def download_file(self, meta: dict, file_type: str) -> Tuple[object, dict]:
+    async def download_file(self, meta: dict, file_type: str) -> object:
+        """Публичный метод получения файла с серверов Telegram."""
         file_meta: dict = await self._request('getFile', method='post', params={'file_id': meta['file_id']})
-
         file_path: str = file_meta.get('file_path')
         file_suffix: str = Path(file_path).suffix
 
         if not file_suffix:
-            file_suffix: str = self.audio_suffix_mimetype_map.get(meta.get('mime_type'))
+            file_suffix = self.audio_suffix_mimetype_map.get(meta.get('mime_type'))
         if not file_suffix:
             raise TGApiError('File has neither suffix nor suitable mime type.', file_meta)
 
@@ -118,7 +121,7 @@ class TelegramAPI:
                 }
             )
 
-        url = os.path.join(f'https://api.telegram.org/file/bot{self.token}', file_path)
+        url: str = os.path.join(f'https://api.telegram.org/file/bot{self.token}', file_path)
         file_object: object = NamedTemporaryFile(suffix=file_meta['suffix'])
         try:
             async with self.session.get(url) as response:
@@ -130,23 +133,25 @@ class TelegramAPI:
         return file_object
 
     async def upload_file(self, user_id: int, file: bytes, meta: dict, as_voice: bool) -> dict:
+        """Публичный метод загрузки файла на сервера Telegram."""
         path: str
         params: dict = {'chat_id': str(user_id), 'duration': str(meta['duration'])}
+        # TODO: кажется на самом деле свыше около 20 МБ телеграм уже не принимает.
         if len(file) >= self.SIZE_50MB:
             raise FileSizeError(
                 f'Uploading file size limit exceeded. Size: {len(file)}, limit: {self.SIZE_50MB}',
                 {'size': len(file), 'limit': self.SIZE_50MB}
             )
 
-        suffix = self.audio_suffix_mimetype_map[meta['mime_type']]
+        suffix: str = self.audio_suffix_mimetype_map[meta['mime_type']]
         performer: str = meta.get('performer', '')
         title: str = meta.get('title', '')
         file_id: str = meta.get('file_id', '')
         file_unique_id: str = meta.get('file_unique_id', '')
 
-        log.info(meta)
+        log.debug(meta)
         filename: str = f"{performer or file_id}-{title or file_unique_id}"
-        form_data = FormData(quote_fields=False)
+        form_data: FormData = FormData(quote_fields=False)
         if as_voice:
             path = 'sendVoice'
             form_data.add_field('voice', file, filename=f"{filename}.ogg", content_type='audio/ogg')
@@ -156,6 +161,3 @@ class TelegramAPI:
             form_data.add_field('audio', file, filename=f"{filename}{suffix}", content_type=meta['mime_type'])
 
         return await self._request(path, params=params, form_data=form_data)
-
-    async def clean(self):
-        await self.session.close()

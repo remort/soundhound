@@ -1,7 +1,12 @@
 import os
+from typing import Tuple
 
 from app.exceptions.api import ConfigurationError
 
+DEBUGLEVELS: Tuple[str] = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+DEBUGLEVEL: str = os.getenv('DEBUGLEVEL', 'DEBUG')
+if DEBUGLEVEL and DEBUGLEVEL not in DEBUGLEVELS:
+    raise ConfigurationError('invalid_debuglevel', {'LEVELS': DEBUGLEVELS})
 
 TOKEN: str = os.getenv('TOKEN', None)
 if not TOKEN:

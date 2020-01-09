@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List
 
 from marshmallow import Schema, post_load
 from marshmallow.fields import Boolean, Integer
-from marshmallow.fields import List as ListField, Tuple as TupleField
+from marshmallow.fields import List as ListField
 from marshmallow.fields import String
 
 from app.serializers.utils import BytesField
