@@ -26,9 +26,9 @@ action_list: List[Action] = [
         'Pass start and end seconds please as one message like that: 15-120',
     ),
     Action(
-        'set_cover',
-        'Change cover',
-        'Send a picture',
+        'thumbnail',
+        'Set thumbnail as a cover for the audio file',
+        'Send one photo',
     ),
 ]
 

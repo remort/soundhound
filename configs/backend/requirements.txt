@@ -3,3 +3,4 @@ aiojobs
 aioredis
 gunicorn
 marshmallow
+pillow

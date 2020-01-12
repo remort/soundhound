@@ -4,12 +4,19 @@ import logging
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from aiohttp import ClientConnectorError, ClientSession, ContentTypeError
 from aiohttp.formdata import FormData
 
-from app.config import DEBUGLEVEL, SERVER_NAME, TOKEN
+from app.config import (
+    DEBUGLEVEL,
+    SERVER_NAME,
+    SIZE_1MB,
+    SIZE_10MB,
+    SIZE_50MB,
+    TOKEN,
+)
 from app.exceptions.api import (
     FileSizeError,
     TGApiError,
@@ -20,15 +27,8 @@ from app.exceptions.api import (
 log = logging.getLogger(__name__)
 logging.basicConfig(level=DEBUGLEVEL)
 
-# TODO: проверить работу со всеми этими файлами
-SUPPORTED_PICTURE_SUFFIXES: Tuple[str] = ('.jpg', '.jpeg', '.png')
-
 
 class TelegramAPI:
-    SIZE_1MB: int = 1048576
-    SIZE_10MB: int = 10485760
-    SIZE_50MB: int = 52428800
-
     def __init__(self, http_client_session: ClientSession):
         self.token: str = TOKEN
         self.api_url: str = f'https://api.telegram.org/bot{self.token}/'
@@ -40,7 +40,10 @@ class TelegramAPI:
             'audio/mp4': '.m4a',
             'audio/flac': '.flac',
         }
-        # TODO: picture_suffix_mimetype_map
+        self.picture_suffix_mimetype_map = {
+            'image/jpeg': '.jpg',
+            'image/png': '.png',
+        }
 
     async def _request(
             self,
@@ -96,21 +99,30 @@ class TelegramAPI:
             }
         )
 
-    async def download_file(self, meta: dict, file_type: str) -> object:
+    async def download_file(
+            self,
+            meta: dict,
+            file_type: str,
+            as_bytes: bool = False,
+    ) -> Tuple[Union[object, bytes], dict]:
         """Публичный метод получения файла с серверов Telegram."""
         file_meta: dict = await self._request('getFile', method='post', params={'file_id': meta['file_id']})
         file_path: str = file_meta.get('file_path')
-        file_suffix: str = Path(file_path).suffix
+        file_suffix: str = Path(file_path).suffix.lower()
+        log.debug(file_suffix)
 
         if not file_suffix:
             file_suffix = self.audio_suffix_mimetype_map.get(meta.get('mime_type'))
         if not file_suffix:
             raise TGApiError('File has neither suffix nor suitable mime type.', file_meta)
 
-        file_meta['suffix'] = file_suffix.lower()
+        file_meta['suffix'] = file_suffix
 
-        supported_suffixes: Tuple[str] = \
-            self.audio_suffix_mimetype_map.values() if file_type == 'audio' else SUPPORTED_PICTURE_SUFFIXES
+        supported_suffixes: Tuple[str] = ()
+        if file_type == 'audio':
+            supported_suffixes = self.audio_suffix_mimetype_map.values()
+        if file_type == 'photo':
+            supported_suffixes = self.picture_suffix_mimetype_map.values()
 
         if file_meta['suffix'] not in supported_suffixes:
             raise WrongFileError(
@@ -130,34 +142,56 @@ class TelegramAPI:
             file_object.close()
             raise TGNetworkError('Receiving file content is failed.', file_meta, exc)
 
-        return file_object
+        if as_bytes:
+            file_object.seek(0)
+            return file_object.read(), file_meta
 
-    async def upload_file(self, user_id: int, file: bytes, meta: dict, as_voice: bool) -> dict:
-        """Публичный метод загрузки файла на сервера Telegram."""
+        return file_object, file_meta
+
+    async def upload_file(
+            self,
+            user_id: int,
+            file_content: bytes,
+            file_meta: dict,
+            as_voice: bool,
+            thumbnail: bytes = None,
+    ) -> dict:
+        """
+        Публичный метод загрузки файла на сервера Telegram.
+        Thumbnail: Шлется только байтами, только если аудиофайл так же шлется байтами, только для метода sendAudio.
+        """
         path: str
-        params: dict = {'chat_id': str(user_id), 'duration': str(meta['duration'])}
+        params: dict = {'chat_id': str(user_id), 'duration': str(file_meta['duration'])}
         # TODO: кажется на самом деле свыше около 20 МБ телеграм уже не принимает.
-        if len(file) >= self.SIZE_50MB:
+        if len(file_content) >= SIZE_50MB:
             raise FileSizeError(
-                f'Uploading file size limit exceeded. Size: {len(file)}, limit: {self.SIZE_50MB}',
-                {'size': len(file), 'limit': self.SIZE_50MB}
+                f'Uploading file size limit exceeded. Size: {len(file_content)}, limit: {SIZE_50MB}',
+                {'size': len(file_content), 'limit': SIZE_50MB}
             )
 
-        suffix: str = self.audio_suffix_mimetype_map[meta['mime_type']]
-        performer: str = meta.get('performer', '')
-        title: str = meta.get('title', '')
-        file_id: str = meta.get('file_id', '')
-        file_unique_id: str = meta.get('file_unique_id', '')
+        suffix: str = self.audio_suffix_mimetype_map[file_meta['mime_type']]
+        performer: str = file_meta.get('performer', '')
+        title: str = file_meta.get('title', '')
+        file_id: str = file_meta.get('file_id', '')
+        file_unique_id: str = file_meta.get('file_unique_id', '')
 
-        log.debug(meta)
         filename: str = f"{performer or file_id}-{title or file_unique_id}"
         form_data: FormData = FormData(quote_fields=False)
         if as_voice:
             path = 'sendVoice'
-            form_data.add_field('voice', file, filename=f"{filename}.ogg", content_type='audio/ogg')
+            form_data.add_field('voice', file_content, filename=f"{filename}.ogg", content_type='audio/ogg')
+            if thumbnail:
+                log.error('Thumbnails allowed for sendAudio only.')
         else:
             path = 'sendAudio'
             params.update({'performer': performer, 'title': title})
-            form_data.add_field('audio', file, filename=f"{filename}{suffix}", content_type=meta['mime_type'])
+            form_data.add_field(
+                'audio',
+                file_content,
+                filename=f"{filename}{suffix}",
+                content_type=file_meta['mime_type']
+            )
+            if thumbnail:
+                form_data.add_field('thumb', thumbnail, filename=f"thumb.jpeg", content_type='image/jpeg')
 
         return await self._request(path, params=params, form_data=form_data)

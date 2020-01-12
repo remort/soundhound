@@ -16,6 +16,12 @@ SERVER_NAME: str = os.getenv('SERVER_NAME')
 
 OPERATION_LOCK_TIMEOUT: int = 600
 
+SIZE_1MB: int = 1048576
+SIZE_10MB: int = 10485760
+SIZE_50MB: int = 52428800
+
+THUMB_EDGE_LIMIT: int = 320
+
 USAGE_INFO: str = """
 This bloat helps you to perform some small actions with your audio files in Telegram.
 

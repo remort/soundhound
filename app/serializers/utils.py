@@ -1,4 +1,5 @@
 from datetime import datetime
+
 from marshmallow.fields import DateTime, Field, ValidationError
 
 
@@ -17,8 +18,9 @@ class Timestamp(DateTime):
 
 class BytesField(Field):
     def _validate(self, value):
+        super()._validate(value)
         if not isinstance(value, bytes):
             raise ValidationError('Invalid input type.')
 
         if value is None or value == b'':
-            raise ValidationError('Invalid value')
+            raise ValidationError('Invalid input type.')

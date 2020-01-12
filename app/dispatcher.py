@@ -1,22 +1,23 @@
+from dataclasses import asdict
 import logging
 from logging import Logger
 import pickle
-from typing import List, Tuple
+from typing import List, Optional, Tuple, Union
 
 from aioredis.commands import Redis
 
 from app.actions_dict import actions
 from app.audiohandler import AudioHandler
-from app.config import DEBUGLEVEL, OPERATION_LOCK_TIMEOUT, USAGE_INFO
+from app.config import DEBUGLEVEL, OPERATION_LOCK_TIMEOUT, SIZE_1MB, USAGE_INFO
 from app.exceptions.api import (
-    NotImplementedYetError,
     ParametersValidationError,
     RoutingError,
     SoundHoundError,
 )
-from app.serializers.telegram import Audio
+from app.serializers.telegram import Audio, PhotoSize
 from app.serializers.user_state import UserStateModel, UserStateSchema
 from app.tg_api import TelegramAPI
+from app.utils import is_start_message, resize_thumbnail
 
 log: Logger = logging.getLogger(__name__)
 logging.basicConfig(level=DEBUGLEVEL)
@@ -29,16 +30,17 @@ class Dispatcher:
         self.client_session = client_session
         self.audio = AudioHandler()
 
-    async def dispatch(self, user_id, update):
+    async def dispatch(self, user_id: int, update: dict):
         with await self.redis as redis_conn:
             # Потому что у aioredis нет lock
             await redis_conn.set(f'{user_id}-lock', '1', expire=OPERATION_LOCK_TIMEOUT)
             try:
                 await self._dispatch(user_id, update)
             except SoundHoundError as exc:
+                log.debug('Internal exception caught')
                 await self.handle_error(user_id, exc)
             except Exception as exc:
-                log.exception('Generic exception happened')
+                log.exception('Generic exception caught')
             finally:
                 await redis_conn.delete(f'{user_id}-lock')
                 log.debug(f'Message from user {user_id} handled')
@@ -48,13 +50,11 @@ class Dispatcher:
         user_state = UserStateModel(id=user_id, actions_sent=True)
         await self._save_state(user_id, user_state)
 
-    async def _dispatch(self, user_id, update):
-        user_state: UserStateModel
-        user_state = await self._get_state(user_id)
-
+    async def _dispatch(self, user_id: int, update: dict):
+        """Роутинг мессаджей юзера происходит тут."""
         message = update.get('message')
         if message:
-            if message.get('text') in ('/start', '/reset'):
+            if is_start_message(update):
                 log.debug(f'User {user_id} reset his task')
                 await self._clean_state(user_id)
                 await self.initiate_task(user_id)
@@ -62,6 +62,9 @@ class Dispatcher:
             if message.get('text') == '/info':
                 await self.tg_api.send_message(user_id, USAGE_INFO)
                 return
+
+        user_state: UserStateModel
+        user_state = await self._get_state(user_id)
 
         if not user_state:
             await self.initiate_task(user_id)
@@ -71,34 +74,56 @@ class Dispatcher:
             log.error('State exists but action list was not send. Unknown message: ', update)
 
         if user_state.action:
+            file: bytes
+            file_meta: dict
+
             if user_state.action in ('crop', 'makevoice'):
                 if not user_state.time_range:
-                    user_state.time_range = self._validate_user_time_range(update)
+                    time_range: str = self._get_tg_object(update, 'text')
+                    user_state.time_range = self._validate_time_range(time_range)
                     await self._save_state(user_id, user_state)
-
-                    if user_state.audio_file_sent:
-                        raise RoutingError('Action and parameters set. Expecting audio but got message.', update)
                     await self.tg_api.send_message(user_id, 'Time range set, send audio file, please.')
-                    return
 
-                elif not user_state.audio_file_sent:
-                    audio_meta: dict = self._validate_audio_file(update)
+                elif not user_state.audio_file:
+                    audio_meta: dict = self._get_tg_object(update, 'audio')
                     self._validate_file_duration(audio_meta['duration'], user_state.time_range)
                     audio_meta['duration'] = user_state.time_range[1] - user_state.time_range[0]
 
-                    file: object = await self.tg_api.download_file(audio_meta, 'audio')
+                    file, file_meta = await self.tg_api.download_file(audio_meta, 'audio', as_bytes=True)
 
                     user_state.audio_meta = audio_meta
-                    user_state.audio_file = file.name
+                    user_state.audio_file = file
                     await self._save_state(user_id, user_state)
 
-                    mod_file: bytes = await self.audio.handle_file(file, user_state.action, user_state.time_range)
+                    mod_file: bytes = await self.audio.handle_file(
+                        file,
+                        file_meta,
+                        user_state.action,
+                        user_state.time_range,
+                    )
 
                     as_voice: bool = True if user_state.action == 'makevoice' else False
                     await self.tg_api.upload_file(user_id, mod_file, audio_meta, as_voice)
+                    await self.tg_api.send_message(user_id, 'Send next audio file or /start to start new action.')
+            if user_state.action == 'thumbnail':
+                if not user_state.thumbnail_file:
+                    photo_meta: dict = self._get_tg_object(update, 'photo')
+                    log.info(photo_meta)
 
-                    await self._clean_state(user_id)
-                    return
+                    if not 0 < photo_meta['file_size'] < SIZE_1MB:
+                        raise ParametersValidationError('Telegram photo is empty or too large.', photo_meta)
+
+                    file, meta = await self.tg_api.download_file(photo_meta, 'photo', as_bytes=True)
+                    file = resize_thumbnail(file, photo_meta['width'], photo_meta['height'])
+                    user_state.thumbnail_file = file
+                    await self._save_state(user_id, user_state)
+                    await self.tg_api.send_message(user_id, 'Got thumbnail, send audio file, please.')
+                elif not user_state.audio_file:
+                    audio_meta: dict = self._get_tg_object(update, 'audio')
+                    file, file_meta = await self.tg_api.download_file(audio_meta, 'audio', as_bytes=True)
+                    await self.tg_api.upload_file(user_id, file, audio_meta, False, user_state.thumbnail_file)
+                    await self.tg_api.send_message(user_id, 'Send next audio file or /start to start new action.')
+
         else:
             callback_query: dict = update.get('callback_query')
             if not callback_query:
@@ -107,65 +132,89 @@ class Dispatcher:
             action = update['callback_query'].get('data')
             if not action:
                 raise RoutingError('Unable to parse button press.', update)
-            if action == 'set_cover':
-                await self._clean_state(user_id)
-                raise NotImplementedYetError
 
             user_state.action = action
             await self._save_state(user_id, user_state)
             await self._ask_action_parameters(user_id, action)
 
     async def _send_action_list(self, user_id: int):
+        """Начало диалога с юзером. Выслать action list-клавиатуру."""
         buttons: List[Tuple[str]] = [(action_name, action.title) for action_name, action in actions.action_map.items()]
         await self.tg_api.send_message(user_id, 'Please select an action', buttons)
         log.debug(f'Action list sent to {user_id}')
 
     async def _ask_action_parameters(self, user_id, action: str):
+        """Второй шаг диалога с юзером. Запрос параметров после выбора действия."""
         action_message = actions.action_map[action].message
         await self.tg_api.send_message(user_id, action_message)
         log.debug(f'Parameters asked for {user_id}')
 
-    async def _get_state(self, user_id) -> UserStateModel:
+    async def _get_state(self, user_id: int) -> UserStateModel:
+        """
+        Получаем стейт юзера по его id из redis в виде байт.
+        Десериализуем pickle. Затем сериализуем в python объект через сериализатор Marshmallow,
+        затем в объект модели UserStateModel.
+        """
         with await self.redis as redis_conn:
-            if not await redis_conn.exists(f'{user_id}-state'):
+            binary_data: Optional[bytes] = await redis_conn.get(f'{user_id}-state')
+            if not binary_data:
                 return None
 
-            return UserStateSchema().loads(
-                pickle.loads(
-                    await redis_conn.get(f'{user_id}-state')
-                )
-            )
+            return UserStateModel(**UserStateSchema().load(pickle.loads(binary_data)))
 
-    async def _save_state(self, user_id, user_state: UserStateModel):
+    async def _save_state(self, user_id: int, user_state: UserStateModel):
+        """
+        Входящая модель UserStateModel (dataclass объект) хранит разные поля, в том числе байтовые.
+        Проверяем верность модели сериализуя ее с помощью UserStateSchema в питонный объект.
+        В байты, для хранения в redis, сериализуем с помощью pickle, т.к. в JSON нельзя из-за байт.
+        """
         with await self.redis as redis_conn:
-            log.info(f'serialized state: {UserStateSchema().dumps(user_state)}')
+            await redis_conn.set(f'{user_id}-state', pickle.dumps(UserStateSchema().load(asdict(user_state))))
 
-            res = await redis_conn.set(
-                f'{user_id}-state',
-                pickle.dumps(
-                    UserStateSchema().dumps(user_state)
-                )
-            )
-            log.debug(f'Saving state result: {res}')
-
-    async def _clean_state(self, user_id):
+    async def _clean_state(self, user_id: int):
         with await self.redis as redis_conn:
-            res = await redis_conn.delete(f'{user_id}-state')
-            log.debug(f'Cleaning state result: {res}')
+            await redis_conn.delete(f'{user_id}-state')
+        log.debug(f'State for {user_id} is cleaned.')
 
     @staticmethod
-    def _validate_audio_file(update: dict) -> dict:
+    def _get_tg_object(update: dict, obj_type: str) -> Union[dict, str]:
+        data: Union[dict, str] = None
         if not update.get('message'):
             raise RoutingError('Unexpected message type. Expecting audio message.', update)
-        if not update['message'].get('audio'):
-            raise RoutingError('No audio found in message. Expecting audio message.', update)
+        if not update['message'].get(obj_type):
+            raise RoutingError(f'No "{obj_type}" found in message. Expecting "{obj_type}" message.', update)
 
+        if obj_type == 'audio':
+            try:
+                data = Audio().dump(update['message']['audio'])
+            except Exception as exc:
+                raise ParametersValidationError('Unable to parse audio object.', update['message'], exc)
+
+        if obj_type == 'photo':
+            try:
+                data = PhotoSize().dump(update['message']['photo'].pop())
+            except Exception as exc:
+                raise ParametersValidationError('Unable to parse photo object.', update['message'], exc)
+
+        if obj_type == 'text':
+            data = update['message'].get('text')
+
+            if not data:
+                raise ParametersValidationError('Unable to parse range.', {'message': update['message']})
+
+        return data
+
+    @staticmethod
+    def _validate_time_range(data: str) -> Tuple[int, int]:
         try:
-            audio_metadata = Audio().dump(update['message']['audio'])
+            start_sec, end_sec = tuple(int(x.strip()) for x in data.split('-'))
         except Exception as exc:
-            raise ParametersValidationError('Unable to parse audio object.', update['message'], exc)
+            raise ParametersValidationError('Range is invalid.', data, exc)
 
-        return audio_metadata
+        if start_sec >= end_sec:
+            raise ParametersValidationError('First argument must be less than second.', data)
+
+        return start_sec, end_sec
 
     @staticmethod
     def _validate_file_duration(file_duration: int, time_range: Tuple[int, int]):
@@ -179,44 +228,7 @@ class Dispatcher:
                 }
             )
 
-    @staticmethod
-    def _validate_user_time_range(update: dict):
-        message = update.get('message')
-
-        if not message:
-            raise RoutingError('Unexpected message type. Expecting text message.', update)
-
-        if not message.get('text'):
-            raise RoutingError('Unable to parse message: no "text" field found.', update)
-
-        data = message['text']
-
-        if not data:
-            raise ParametersValidationError('Unable to parse range.', {'message': update['message']})
-
-        try:
-            start_sec, end_sec = tuple(int(x.strip()) for x in data.split('-'))
-        except Exception as exc:
-            raise ParametersValidationError('Range is invalid.', data, exc)
-
-        if start_sec >= end_sec:
-            raise ParametersValidationError('First argument must be less than second.', data)
-
-        return start_sec, end_sec
-
-    async def handle_error(self, user_id, exc):
-        error_desc: str = None
-        extra: str = None
-        message: str = f'{exc.err_msg}'
-
-        # if exc.extra:
-        #     extra = '\n'.join([f'{key}: {val}' for key, val in exc.extra.items()])
-        #     message += f'\n{extra}'
-        #
-        # if exc.orig_exc:
-        #     log.debug(exc.orig_exc)
-        #     error_desc = exc.orig_exc.message
-        #     message += f'\n{error_desc}'
-
-        await self.tg_api.send_message(user_id, message)
-        log.debug(f'Error message sent: {message}')
+    async def handle_error(self, user_id: int, exc: SoundHoundError):
+        """В случае SoundHound exception - отправляет юзеру в телеграм обязательный err_msg из него."""
+        await self.tg_api.send_message(user_id, exc.err_msg)
+        log.debug(f'Error message sent: {exc.err_msg}')

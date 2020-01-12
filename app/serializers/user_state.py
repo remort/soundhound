@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
-from marshmallow import Schema, post_load
+from marshmallow import Schema
 from marshmallow.fields import Boolean, Integer
-from marshmallow.fields import List as ListField
+from marshmallow.fields import List as ListField, Dict as DictField
 from marshmallow.fields import String
 
 from app.serializers.utils import BytesField
@@ -16,8 +16,9 @@ class UserStateModel:
     actions_sent: bool = False
     time_range: List[int] = field(default_factory=tuple)
     audio_metadata: Dict[str, Any] = field(default_factory=dict)
-    audio_file_sent: bool = False
     audio_file: bytes = None
+    thumbnail_id: str = None
+    thumbnail_file: bytes = None
 
 
 class UserStateSchema(Schema):
@@ -25,9 +26,7 @@ class UserStateSchema(Schema):
     action = String(required=False, allow_none=True)
     actions_sent = Boolean(required=False)
     time_range = ListField(Integer(), required=False, allow_none=True)
-    file_sent = Boolean(required=False)
-    file = BytesField(required=False, allow_none=True)
-
-    @post_load
-    def make_user_state(self, data, **kwargs):
-        return UserStateModel(**data)
+    audio_metadata = DictField(keys=String(), values=String(), required=False, allow_none=True)
+    audio_file = BytesField(required=False, allow_none=True)
+    thumbnail_id = String(required=False, allow_none=True)
+    thumbnail_file = BytesField(required=False, allow_none=True)

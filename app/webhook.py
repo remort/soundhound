@@ -9,6 +9,7 @@ from marshmallow.exceptions import ValidationError
 from app.config import DEBUGLEVEL
 from app.exceptions.api import UpdateValidationError
 from app.serializers.telegram import Update
+from app.utils import is_start_message
 
 log: Logger = logging.getLogger(__name__)
 logging.basicConfig(level=DEBUGLEVEL)
@@ -60,6 +61,13 @@ class WebhookHandler(View):
                 if data['message']['from'].get('id'):
                     return data['message']['from']['id']
 
+    @staticmethod
+    def is_start(self, update):
+        if update.get('message'):
+            if update['message'].get('text') in ('/start', '/reset'):
+                return True
+        return False
+
     async def post(self) -> Response:
         """
         POST-хэндлер webhook бота.
@@ -87,8 +95,11 @@ class WebhookHandler(View):
         user_id: int = self.validate_user(update)
 
         log.debug(f'Incoming message from {user_id}')
+
         with await self.request.app['redis'] as conn:
-            if await conn.exists(f'{user_id}-lock'):
+            if is_start_message(update):
+                await conn.delete(f'{user_id}-lock')
+            elif await conn.exists(f'{user_id}-lock'):
                 await self.request.app['tg_api'].send_message(user_id, 'operation is pending')
                 return Response()
 
