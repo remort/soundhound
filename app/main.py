@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 from logging import Logger
 
 from aiohttp import ClientSession
@@ -10,6 +11,7 @@ from aioredis.commands import Redis
 
 from app.config import DEBUGLEVEL
 from app.dispatcher import Dispatcher
+from app.exceptions.base import SoundHoundError
 from app.tg_api import TelegramAPI
 from app.webhook import WebhookHandler
 
@@ -18,8 +20,12 @@ logging.basicConfig(level=DEBUGLEVEL)
 
 
 async def init_webhook(app):
-    webhook: str = await app['tg_api'].set_webhook()
-    log.debug(f'Webhook set to {webhook}')
+    try:
+        webhook: str = await app['tg_api'].set_webhook()
+        log.debug(f'Webhook set to {webhook}')
+    except SoundHoundError as err:
+        log.error(f'Webhook set failed. Error: {err.err_msg}')
+        sys.exit(4)
 
 
 async def close_redis(app):

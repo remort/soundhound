@@ -6,20 +6,11 @@ services:
       context: configs/backend
     command: gunicorn -c /etc/gunicorn.py app.main:http_app_factory
     ports:
-      - 7000:8000
+      - 127.0.0.1:7000:8000
     volumes:
       - ./app:/app
     env_file:
       - .env
-
-#  proxy:
-#    build:
-#      context: configs/proxy
-#    image: soundhound-proxy
-#    container_name: soundhound-proxy
-#    hostname: proxy
-#    env_file:
-#      - .env
 
   redis:
     image: redis:5-alpine

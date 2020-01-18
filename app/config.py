@@ -13,6 +13,7 @@ if not TOKEN:
     raise ConfigurationError('no_token', {'token': TOKEN})
 
 SERVER_NAME: str = os.getenv('SERVER_NAME')
+PUBLIC_PORT: int = int(os.getenv('PUBLIC_PORT'))
 
 OPERATION_LOCK_TIMEOUT: int = 600
 

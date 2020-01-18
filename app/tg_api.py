@@ -12,6 +12,7 @@ from aiohttp.formdata import FormData
 from app.config import (
     DEBUGLEVEL,
     SERVER_NAME,
+    PUBLIC_PORT,
     SIZE_1MB,
     SIZE_10MB,
     SIZE_50MB,
@@ -33,7 +34,7 @@ class TelegramAPI:
         self.token: str = TOKEN
         self.api_url: str = f'https://api.telegram.org/bot{self.token}/'
         self.session: ClientSession = http_client_session
-        self.webhook_url: str = f'https://{SERVER_NAME}/webhook/'
+        self.webhook_url: str = f'https://{SERVER_NAME}:{PUBLIC_PORT}/webhook/'
         self.audio_suffix_mimetype_map = {
             'audio/mpeg': '.mp3',
             'audio/x-opus+ogg': '.ogg',
@@ -67,12 +68,17 @@ class TelegramAPI:
             raise TGNetworkError('Request to Telegram API failed.', exc)
 
         if not resp.get('ok'):
+            log.error(f"Telegram API returned error: {resp['error_code']}: {resp['description']}.")
             raise TGApiError(f"Telegram API returned error: {resp['error_code']}: {resp['description']}.", resp)
 
         return resp['result']
 
     async def set_webhook(self) -> str:
-        """Инициализация вебхука."""
+        """
+        Инициализация вебхука.
+        Telegram: Webhook can be set up only on ports 80, 88, 443 or 8443
+        """
+
         resp: dict = await self._request('getWebhookInfo')
         if resp.get('url') != self.webhook_url:
             await self._request('setWebhook', params={'url': self.webhook_url})
