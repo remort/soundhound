@@ -14,7 +14,7 @@ from app.exceptions.api import (
     RoutingError,
     SoundHoundError,
 )
-from app.serializers.telegram import Audio, PhotoSize
+from app.serializers.telegram import Audio, Document, PhotoSize, Schema, Voice
 from app.serializers.user_state import UserStateModel, UserStateSchema
 from app.tg_api import TelegramAPI
 from app.utils import is_start_message, resize_thumbnail
@@ -32,13 +32,14 @@ class Dispatcher:
 
     async def dispatch(self, user_id: int, update: dict):
         with await self.redis as redis_conn:
+            log.debug(update)
             # Потому что у aioredis нет lock
             await redis_conn.set(f'{user_id}-lock', '1', expire=OPERATION_LOCK_TIMEOUT)
             try:
                 await self._dispatch(user_id, update)
             except SoundHoundError as exc:
                 log.debug('Internal exception caught')
-                await self.handle_error(user_id, exc)
+                await self._handle_error(user_id, exc)
             except Exception as exc:
                 log.exception('Generic exception caught')
             finally:
@@ -83,16 +84,14 @@ class Dispatcher:
                     user_state.time_range = self._validate_time_range(time_range)
                     await self._save_state(user_id, user_state)
                     await self.tg_api.send_message(user_id, 'Time range set, send audio file, please.')
-
-                elif not user_state.audio_file:
+                else:
                     audio_meta: dict = self._get_tg_object(update, 'audio')
-                    self._validate_file_duration(audio_meta['duration'], user_state.time_range)
+                    self._validate_file_duration(audio_meta.get('duration'), user_state.time_range)
                     audio_meta['duration'] = user_state.time_range[1] - user_state.time_range[0]
 
-                    file, file_meta = await self.tg_api.download_file(audio_meta, 'audio', as_bytes=True)
+                    file, file_meta = await self.tg_api.download_file(audio_meta, 'audio')
 
                     user_state.audio_meta = audio_meta
-                    user_state.audio_file = file
                     await self._save_state(user_id, user_state)
 
                     mod_file: bytes = await self.audio.handle_file(
@@ -108,19 +107,19 @@ class Dispatcher:
             if user_state.action == 'thumbnail':
                 if not user_state.thumbnail_file:
                     photo_meta: dict = self._get_tg_object(update, 'photo')
-                    log.info(photo_meta)
 
                     if not 0 < photo_meta['file_size'] < SIZE_1MB:
                         raise ParametersValidationError('Telegram photo is empty or too large.', photo_meta)
 
-                    file, meta = await self.tg_api.download_file(photo_meta, 'photo', as_bytes=True)
+                    file, meta = await self.tg_api.download_file(photo_meta, 'photo')
                     file = resize_thumbnail(file, photo_meta['width'], photo_meta['height'])
                     user_state.thumbnail_file = file
                     await self._save_state(user_id, user_state)
                     await self.tg_api.send_message(user_id, 'Got thumbnail, send audio file, please.')
-                elif not user_state.audio_file:
+                else:
                     audio_meta: dict = self._get_tg_object(update, 'audio')
-                    file, file_meta = await self.tg_api.download_file(audio_meta, 'audio', as_bytes=True)
+
+                    file, file_meta = await self.tg_api.download_file(audio_meta, 'audio')
                     await self.tg_api.upload_file(user_id, file, audio_meta, False, user_state.thumbnail_file)
                     await self.tg_api.send_message(user_id, 'Send next audio file or /start to start new action.')
 
@@ -176,13 +175,34 @@ class Dispatcher:
             await redis_conn.delete(f'{user_id}-state')
         log.debug(f'State for {user_id} is cleaned.')
 
-    @staticmethod
-    def _get_tg_object(update: dict, obj_type: str) -> Union[dict, str]:
+    def _get_tg_object(self, update: dict, obj_type: str) -> Union[dict, str]:
+        """
+        Из входящего update от пользователя берет obj_type (аудио, картинка, текст) или выбрасывает исключение.
+        """
         data: Union[dict, str] = None
         if not update.get('message'):
             raise RoutingError('Unexpected message type. Expecting audio message.', update)
-        if not update['message'].get(obj_type):
-            raise RoutingError(f'No "{obj_type}" found in message. Expecting "{obj_type}" message.', update)
+
+        # Если мы ожидаем Audio а пришел не он, то это может быть Voice или Document с валидным аудио по mime.
+        if obj_type == 'audio' and not update['message'].get(obj_type):
+            payload: dict = update['message'].get('voice')
+            serializer: Schema = Voice()
+            if not payload:
+                payload = update['message'].get('document')
+                if not payload:
+                    raise RoutingError(f'No document found in message. Expecting "{obj_type}/voice" message.', update)
+                serializer = Document()
+
+            try:
+                data = serializer.dump(payload)
+            except Exception as exc:
+                raise ParametersValidationError('Unable to parse object.', update['message'], exc)
+
+            mime: str = data.get('mime_type')
+            if not mime or mime not in self.tg_api.audio_suffix_mimetype_map:
+                raise RoutingError(f'Mime type: {mime} is not supported. Expecting "{obj_type}" message.', update)
+
+            return data
 
         if obj_type == 'audio':
             try:
@@ -206,6 +226,11 @@ class Dispatcher:
 
     @staticmethod
     def _validate_time_range(data: str) -> Tuple[int, int]:
+        """
+        Парсит присланный от пользователя в качестве range для crop текст.
+        Проверяет что он является правильным range.
+        Возвращает start_sec и end_sec провалидированного range.
+        """
         try:
             start_sec, end_sec = tuple(int(x.strip()) for x in data.split('-'))
         except Exception as exc:
@@ -218,17 +243,24 @@ class Dispatcher:
 
     @staticmethod
     def _validate_file_duration(file_duration: int, time_range: Tuple[int, int]):
-        time_range: int = time_range[1] - time_range[0]
-        if time_range >= file_duration:
+        """
+        Проверяет duration входящего Audio/Voice на соответствие указанного для crop duration.
+        В случаях когда аудио пришло как Document, duration отсутствует. Тогда пропускаем проверку.
+        """
+        if not file_duration:
+            log.debug('No duration for incoming audio. Skip duration check.')
+            return
+
+        if time_range[1] >= file_duration:
             raise ParametersValidationError(
-                f'File duration ({file_duration}) less than or equal time range ({time_range}).',
+                f'File duration ({file_duration}) mismatch time range ({time_range}).',
                 {
                     'duration': file_duration,
                     'range': time_range,
                 }
             )
 
-    async def handle_error(self, user_id: int, exc: SoundHoundError):
+    async def _handle_error(self, user_id: int, exc: SoundHoundError):
         """В случае SoundHound exception - отправляет юзеру в телеграм обязательный err_msg из него."""
         await self.tg_api.send_message(user_id, exc.err_msg)
-        log.debug(f'Error message sent: {exc.err_msg}')
+        log.debug(f'Error message sent: {exc.err_msg}, extra: {exc.extra}')

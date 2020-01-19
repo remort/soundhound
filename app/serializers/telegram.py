@@ -1,6 +1,5 @@
-from marshmallow import Schema, post_load
-from marshmallow.fields import Integer, String, Nested, Boolean, List
-
+from marshmallow import Schema
+from marshmallow.fields import Boolean, Integer, List, Nested, String
 
 from app.serializers.utils import Timestamp
 
@@ -101,7 +100,12 @@ class Voice(Schema):
 
 
 class Document(Schema):
-    pass
+    file_id = String()
+    file_unique_id = String()
+    thumb = Nested(PhotoSize, required=False)
+    file_name = String(required=False)
+    mime_type = String(required=False)
+    file_size = Integer(required=False)
 
 
 class Animation(Schema):
@@ -256,4 +260,3 @@ class Update(Schema):
     shipping_query = Nested(ShippingQuery, required=False)
     pre_checkout_query = Nested(PreCheckoutQuery, required=False)
     poll = Nested(Poll, required=False)
-

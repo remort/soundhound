@@ -11,8 +11,8 @@ class ConfigurationError(SoundHoundError):
 
 class TGNetworkError(SoundHoundError):
     """Ошибка связанная с сетевым взаимодействием с Telegram API."""
-    def __init__(self, err_msg: str, orig_exc: Exception):
-        super(TGNetworkError, self).__init__(self, err_msg, orig_exc=orig_exc)
+    def __init__(self, err_msg: str, extra: dict, orig_exc: Exception):
+        super(TGNetworkError, self).__init__(self, err_msg, extra, orig_exc)
 
 
 class TGApiError(SoundHoundError):

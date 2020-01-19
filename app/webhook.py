@@ -1,7 +1,7 @@
 from aiojobs.aiohttp import spawn
 import logging
 from logging import Logger
-from typing import Optional
+from typing import Optional, Tuple
 
 from aiohttp.web import View, Response
 from marshmallow.exceptions import ValidationError
@@ -24,7 +24,7 @@ class WebhookHandler(View):
     Т.о. все входящие сообщения от этого пользователя во время действия lock отвергаются хэндлером.
     """
     @staticmethod
-    def validate_user(update_data: dict) -> int:
+    def validate_user(update_data: dict) -> Tuple[int, str]:
         """
         Успешная сериализация update в теории может не иметь информации об отправителе сообщения. Поэтому тут происходит
         поиск и валидация информации об отправителе сообщения в пришедшем от Telegram объекте update.
@@ -47,7 +47,7 @@ class WebhookHandler(View):
         if from_obj.get('is_bot'):
             raise UpdateValidationError('Bots are not allowed.', update_data)
 
-        return from_obj['id']
+        return from_obj['id'], from_obj.get('username')
 
     @staticmethod
     def find_sender(data: dict) -> Optional[int]:
@@ -92,9 +92,11 @@ class WebhookHandler(View):
             log.exception('Marshmallow serialization failed.')
             return Response()
 
-        user_id: int = self.validate_user(update)
+        user_id: int
+        username: str
+        user_id, username = self.validate_user(update)
 
-        log.debug(f'Incoming message from {user_id}')
+        log.debug(f'Incoming message from {username} ({user_id})')
 
         with await self.request.app['redis'] as conn:
             if is_start_message(update):

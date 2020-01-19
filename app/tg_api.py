@@ -1,18 +1,18 @@
 from concurrent.futures._base import CancelledError
+from io import BytesIO
 import json
 import logging
 import os
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from aiohttp import ClientConnectorError, ClientSession, ContentTypeError
 from aiohttp.formdata import FormData
 
 from app.config import (
     DEBUGLEVEL,
-    SERVER_NAME,
     PUBLIC_PORT,
+    SERVER_NAME,
     SIZE_1MB,
     SIZE_10MB,
     SIZE_50MB,
@@ -38,8 +38,11 @@ class TelegramAPI:
         self.audio_suffix_mimetype_map = {
             'audio/mpeg': '.mp3',
             'audio/x-opus+ogg': '.ogg',
+            'audio/ogg': '.oga',
             'audio/mp4': '.m4a',
             'audio/flac': '.flac',
+            'audio/x-flac': '.flac',
+            'audio/x-wav': '.wav',
         }
         self.picture_suffix_mimetype_map = {
             'image/jpeg': '.jpg',
@@ -109,18 +112,16 @@ class TelegramAPI:
             self,
             meta: dict,
             file_type: str,
-            as_bytes: bool = False,
-    ) -> Tuple[Union[object, bytes], dict]:
+    ) -> Tuple[bytes, dict]:
         """Публичный метод получения файла с серверов Telegram."""
         file_meta: dict = await self._request('getFile', method='post', params={'file_id': meta['file_id']})
         file_path: str = file_meta.get('file_path')
-        file_suffix: str = Path(file_path).suffix.lower()
-        log.debug(file_suffix)
 
+        file_suffix: str = self.audio_suffix_mimetype_map.get(meta.get('mime_type'))
         if not file_suffix:
-            file_suffix = self.audio_suffix_mimetype_map.get(meta.get('mime_type'))
-        if not file_suffix:
-            raise TGApiError('File has neither suffix nor suitable mime type.', file_meta)
+            file_suffix = Path(file_path).suffix.lower()
+            if not file_suffix:
+                raise TGApiError('File has neither suffix nor suitable mime type.', file_meta)
 
         file_meta['suffix'] = file_suffix
 
@@ -140,19 +141,17 @@ class TelegramAPI:
             )
 
         url: str = os.path.join(f'https://api.telegram.org/file/bot{self.token}', file_path)
-        file_object: object = NamedTemporaryFile(suffix=file_meta['suffix'])
+        buf: BytesIO = BytesIO()
+
         try:
             async with self.session.get(url) as response:
-                file_object.file.write(await response.read())
+                buf.write(await response.read())
+                buf.seek(0)
         except Exception as exc:
-            file_object.close()
+            buf.close()
             raise TGNetworkError('Receiving file content is failed.', file_meta, exc)
 
-        if as_bytes:
-            file_object.seek(0)
-            return file_object.read(), file_meta
-
-        return file_object, file_meta
+        return buf.read(), file_meta
 
     async def upload_file(
             self,
@@ -167,7 +166,7 @@ class TelegramAPI:
         Thumbnail: Шлется только байтами, только если аудиофайл так же шлется байтами, только для метода sendAudio.
         """
         path: str
-        params: dict = {'chat_id': str(user_id), 'duration': str(file_meta['duration'])}
+        params: dict = {'chat_id': str(user_id), 'duration': int(file_meta.get('duration', 0))}
         # TODO: кажется на самом деле свыше около 20 МБ телеграм уже не принимает.
         if len(file_content) >= SIZE_50MB:
             raise FileSizeError(
@@ -179,9 +178,14 @@ class TelegramAPI:
         performer: str = file_meta.get('performer', '')
         title: str = file_meta.get('title', '')
         file_id: str = file_meta.get('file_id', '')
-        file_unique_id: str = file_meta.get('file_unique_id', '')
 
-        filename: str = f"{performer or file_id}-{title or file_unique_id}"
+        if title and performer:
+            filename: str = f'{performer}-{title}'
+        else:
+            filename = Path(file_meta.get('file_name', '')).stem
+            if not filename:
+                filename = f'{file_id}'
+
         form_data: FormData = FormData(quote_fields=False)
         if as_voice:
             path = 'sendVoice'

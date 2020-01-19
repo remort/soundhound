@@ -24,14 +24,19 @@ SIZE_50MB: int = 52428800
 THUMB_EDGE_LIMIT: int = 320
 
 USAGE_INFO: str = """
-This bloat helps you to perform some small actions with your audio files in Telegram.
+This bot helps you to perform some small actions with your audio files in Telegram.
 
-For now it can:
-1. Receive single .mp3, .flac, .ogg (possibly opus encoded only?) and .m4a file.
-2. Cut it by specified period of time in seconds, returning a fragment of the same format.
-3. Returning fragment can be a Telegram voice audio (opus ogg).
+Type something to call a dog (doc) or use a /start command and you'll get Action keyboard, which allows you:
+- Cut audio files by specified period of time in seconds, returning a fragment of the same format.
+- Same, returning Telegram Voice message.
+- Set thumbnail for an audio file. Thumbnail shows in Telegram only and not being placed into your file. 
 
-Type something to call a dog (doc) or use a /start command.
+Audio file can be either of MP3, FLAC, OGG, WAV or M4A format and get received by Sound Hound one by one.
 
-Feedback: @redahead
+Thumbnail picture can be any photo acceptable by Telegram in any reasonable dimentions.
+It'll be converted to 1:1 320x320 JPEG if needed.
+
+/info shows this message.
+
+Feedback: @redahead.
 """
