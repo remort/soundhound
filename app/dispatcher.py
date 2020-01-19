@@ -203,6 +203,8 @@ class Dispatcher:
                 raise RoutingError(f'Mime type: {mime} is not supported. Expecting "{obj_type}" message.', update)
 
             return data
+        elif not update['message'].get(obj_type):
+            raise ParametersValidationError(f'Expecting {obj_type} message.', update['message'])
 
         if obj_type == 'audio':
             try:
@@ -220,7 +222,7 @@ class Dispatcher:
             data = update['message'].get('text')
 
             if not data:
-                raise ParametersValidationError('Unable to parse range.', {'message': update['message']})
+                raise ParametersValidationError('Expecting text.', {'message': update['message']})
 
         return data
 

@@ -13,8 +13,7 @@ from app.config import (
     DEBUGLEVEL,
     PUBLIC_PORT,
     SERVER_NAME,
-    SIZE_1MB,
-    SIZE_10MB,
+    SIZE_20MB,
     SIZE_50MB,
     TOKEN,
 )
@@ -22,7 +21,7 @@ from app.exceptions.api import (
     FileSizeError,
     TGApiError,
     TGNetworkError,
-    WrongFileError,
+    FileError,
 )
 
 log = logging.getLogger(__name__)
@@ -113,7 +112,13 @@ class TelegramAPI:
             meta: dict,
             file_type: str,
     ) -> Tuple[bytes, dict]:
-        """Публичный метод получения файла с серверов Telegram."""
+        """
+        Публичный метод получения файла с серверов Telegram.
+        For the moment, bots can download files of up to 20MB in size.
+        """
+        if meta['file_size'] >= SIZE_20MB:
+            raise FileError('File is too big. File should not exceed 20 Mb to be handled.', meta['file_size'])
+
         file_meta: dict = await self._request('getFile', method='post', params={'file_id': meta['file_id']})
         file_path: str = file_meta.get('file_path')
 
@@ -132,7 +137,7 @@ class TelegramAPI:
             supported_suffixes = self.picture_suffix_mimetype_map.values()
 
         if file_meta['suffix'] not in supported_suffixes:
-            raise WrongFileError(
+            raise FileError(
                 'Unsupported file type.',
                 {
                     'file_suffix': file_meta['suffix'],

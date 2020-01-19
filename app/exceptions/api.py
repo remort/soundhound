@@ -40,10 +40,10 @@ class ParametersValidationError(SoundHoundError):
         super(ParametersValidationError, self).__init__(self, err_msg, extra, orig_exc)
 
 
-class WrongFileError(SoundHoundError):
+class FileError(SoundHoundError):
     """Если скачиваемый файл не поддерживается."""
     def __init__(self, err_msg: str, extra: dict):
-        super(WrongFileError, self).__init__(self, err_msg, extra)
+        super(FileError, self).__init__(self, err_msg, extra)
 
 
 class FileSizeError(SoundHoundError):
