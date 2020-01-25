@@ -1,15 +1,19 @@
-from typing import Optional
-
 from app.exceptions.base import SoundHoundError
 
 
-class FfmpegError(SoundHoundError):
-    """Выбрасывается при общем сбое запуска ffmpeg."""
+class AudioHandlerError(SoundHoundError):
+    """Выбрасывается при общих ошибках в коде audiohandler.py."""
     def __init__(self, err_msg: str, extra: dict):
-        super(FfmpegError, self).__init__(self, err_msg, extra)
+        super(AudioHandlerError, self).__init__(self, err_msg, extra)
 
 
-class FfmpegExecutableNotFoundError(SoundHoundError):
+class SubprocessError(SoundHoundError):
+    """Выбрасывается при ошибках связанных с запуском/выполнением и получением ответа от ffmpeg/ffprobe."""
+    def __init__(self, err_msg: str, extra: dict):
+        super(SubprocessError, self).__init__(self, err_msg, extra)
+
+
+class ExecutableNotFoundError(SoundHoundError):
     """Выбрасывается если при инициализации класса Audion в системе не был найден ffmpeg."""
     def __init__(self, err_msg: str):
-        super(FfmpegExecutableNotFoundError, self).__init__(self, err_msg)
+        super(ExecutableNotFoundError, self).__init__(self, err_msg)

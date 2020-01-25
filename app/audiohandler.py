@@ -3,10 +3,14 @@ from asyncio.subprocess import Process
 import logging
 import shutil
 from tempfile import NamedTemporaryFile
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 
 from app.config import DEBUGLEVEL
-from app.exceptions.audio import FfmpegError, FfmpegExecutableNotFoundError
+from app.exceptions.audio import (
+    AudioHandlerError,
+    ExecutableNotFoundError,
+    SubprocessError,
+)
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=DEBUGLEVEL)
@@ -15,35 +19,51 @@ logging.basicConfig(level=DEBUGLEVEL)
 class AudioHandler:
     def __init__(self):
         if not shutil.which('ffmpeg'):
-            raise FfmpegExecutableNotFoundError('FFMPEG executable not found in the system.')
-        log.info('FFMPEG found.')
+            raise ExecutableNotFoundError('"ffmpeg" executable not found in the system.')
+        if not shutil.which('ffprobe'):
+            raise ExecutableNotFoundError('"ffprobe" executable not found in the system.')
+        log.info('"ffmpeg" and "ffprobe" found.')
         self.suffix_to_format: dict = {'.m4a': 'adts'}
 
     @staticmethod
-    async def __run_ffmpeg(*params: str, file_content: bytes, suffix: str) -> bytes:
+    async def __run_command(command: str, file_content: bytes, suffix: str, *params: Tuple[str]) -> bytes:
         """
-        Приватный метод запуска ffmpeg с переданными ему параметрами
-        Вызывается из приватных методов конкретных action'ов этого класса.
-        Работает через pipe. Принимает байты и возвращает байты обработанного содержимого.
-        В случае некоторых форматов данных, например m4a(adts), может принимать данные только через файл.
-        file_content - байты аудиофайла подаваемые ffmpeg на stdin.
-        """
-        file_input_suffixes = ('.m4a',)
-        temp_file: Optional[object] = None
-        input_source: str = 'pipe:0'
-        stdin: Optional[str] = asyncio.subprocess.PIPE
-        input: Optional[bytes] = file_content
+        Вызывает ffmpeg/ffprobe с переданными параметрами и возвращает результат или бросает эксепшн.
+        По suffix определяем форматы, которые должны быть переданы ff,peg в качестве файла на ФС.
 
-        if suffix in file_input_suffixes:
-            temp_file: object = NamedTemporaryFile(suffix=suffix)
-            temp_file.write(file_content)
-            input_source = temp_file.name
-            stdin = None
-            input = None
+        Команды работают через pipe кроме некоторых форматов аудио для ffmpeg.
+        ffprobe возвращает битрейт аудио потока в bit/s
+
+        :param command: 'ffmpeg' или 'ffprobe'.
+        :param params: Параметры запуска, разбитые в формате subprocess.
+        :param file_content: байты аудиоконтента.
+        :param suffix: расширение файла.
+        :return: bytes stdout команды.
+        """
+        stdin: Optional[str] = asyncio.subprocess.PIPE
+        pipe_input: Optional[bytes] = file_content
+        temp_file: object = None
+        process: Process = None
+
+        if command == 'ffmpeg':
+            ffmpeg_input_source: str = 'pipe:0'
+
+            if suffix in ('.m4a',):
+                temp_file: object = NamedTemporaryFile(suffix=suffix)
+                temp_file.write(file_content)
+                ffmpeg_input_source = temp_file.name
+                stdin = None
+                pipe_input = None
+            args = ('-hide_banner', '-y', '-i', ffmpeg_input_source, *params, 'pipe:1')
+
+        elif command == 'ffprobe':
+            args = ('-v', 'error', *params, '-')
+        else:
+            raise AudioHandlerError('Unknown command.', {'command': command})
 
         try:
-            args = ('ffmpeg', '-hide_banner', '-y', '-i', input_source, *params, 'pipe:1')
-            log.debug(f'Run ffmpeg subprocess with args: {args}')
+            args = (command, *args)
+            log.debug(f'Run {command} subprocess with args: {args}')
 
             process: Process = await asyncio.create_subprocess_exec(
                 *args,
@@ -51,53 +71,53 @@ class AudioHandler:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            out, err = await process.communicate(input=input)
+            out, err = await process.communicate(input=pipe_input)
 
         except Exception as error:
-            log.error(f'Ffmpeg failed, err: {error}, params: {params}')
-            raise FfmpegError(
-                'Ffmpeg call failed.',
+            raise SubprocessError(
+                f'{command} call failed.',
                 {
-                    'ffmpeg_error': error,
-                    'parameters': params,
+                    'error': error,
+                    'suffix': suffix,
                 }
             )
+
         finally:
+            if process:
+                if process.returncode is None:
+                    await process.terminate()
             if temp_file:
                 temp_file.close()
-            if process.returncode is None:
-                await process.terminate()
-
-        log.debug(f'File processed with return code {process.returncode}')
 
         exc_extra: dict = {
-            'ffmpeg_stdout': out,
-            'ffmpeg_stderr': err,
-            'parameters': params,
+            'stdout': out,
+            'stderr': err,
+            'suffix': suffix,
         }
 
         if process.returncode != 0:
-            log.error(f'Ffmpeg return code is not 0, stderr: {err}, params: {params}, lenout: {len(out)}')
+            log.error(f'{command} return code is not 0. Debug: {exc_extra}')
             if not all((len(out) > 0, isinstance(out, bytes))):
-                raise FfmpegError('Ffmpeg return code is not 0.', exc_extra)
+                raise SubprocessError(f'{command} return code is not 0.', exc_extra)
 
         if not out:
-            raise FfmpegError('Ffmpeg returned zero output.', exc_extra)
+            raise SubprocessError(f'{command} returned zero output.', exc_extra)
 
         return out
 
-    async def _crop_file(self, audio_filename: str, suffix: str, _format: str, time_range: Tuple[int]) -> bytes:
+    async def _crop_file(self, audio: bytes, suffix: str, _format: str, time_range: Tuple[int]) -> bytes:
         """
         Запускает подпроцесс ffmpeg для обрезания аудио файла в заданном диапазоне.
         Возвращает байты обрезанного файла.
         """
-        return await self.__run_ffmpeg(
+        return await self.__run_command(
+            'ffmpeg',
+            audio,
+            suffix,
             '-ss', str(time_range[0]), '-to', str(time_range[1]), '-acodec', 'copy', '-f', _format,
-            file_content=audio_filename,
-            suffix=suffix,
         )
 
-    async def _make_voice(self, audio_filename: str, suffix: str, time_range: Tuple[int]) -> bytes:
+    async def _make_voice(self, audio: bytes, suffix: str, time_range: Tuple[int]) -> bytes:
         """
         Обрезает файл по времени, а так же конвертирует в opus ogg, вычисляя оптимальный битрейт по времени
         результирующего фрагмента.
@@ -114,11 +134,50 @@ class AudioHandler:
         if bitrate >= MAX_BITRATE:
             bitrate = MAX_BITRATE
 
-        return await self.__run_ffmpeg(
+        return await self.__run_command(
+            'ffmpeg',
+            audio,
+            suffix,
             '-ss', str(time_range[0]), '-to', str(time_range[1]), '-map', 'a', '-c:a', 'libopus',
             '-b:a', str(bitrate), '-vbr', 'off', '-f', 'oga',
-            file_content=audio_filename,
-            suffix=suffix,
+        )
+
+    async def _get_bitrate(self, audio: bytes, suffix: str) -> Optional[int]:
+        """У flac почему то не определяет bitrate но это и не нужно, т.к. все равно lossless."""
+        if suffix == '.flac':
+            return None
+
+        output: bytes = await self.__run_command(
+            'ffprobe',
+            audio,
+            suffix,
+            '-show_entries', 'stream=bit_rate', '-select_streams', 'a', '-of', 'csv',
+        )
+
+        field_name: str
+        bitrate: Union[str, int]
+        try:
+            field_name, bitrate = output.decode().strip().split(',')
+            bitrate = int(bitrate)
+        except ValueError:
+            raise AudioHandlerError('Unable to parse ffprobe output.', output)
+
+        return bitrate
+
+    async def _make_opus(self, audio: bytes, file_meta: dict, suffix: str) -> bytes:
+        """Если у нас невысокий битрейт (ниже 192 Кбит), кодируем в 96К Opus. Иначе в 128K Opus."""
+
+        output_bitrate: str = '128K'
+        input_bitrate: int = await self._get_bitrate(audio, suffix)
+
+        if input_bitrate and input_bitrate < 192000:
+            output_bitrate: str = '96K'
+
+        return await self.__run_command(
+            'ffmpeg',
+            audio,
+            suffix,
+            '-c:a', 'libopus', '-b:a', output_bitrate, '-vbr', 'off', '-f', 'oga',
         )
 
     async def handle_file(self, file: bytes, file_meta: dict, action: str, parameters: Any) -> bytes:
@@ -126,7 +185,6 @@ class AudioHandler:
         Публичный метод, принимающий action и соотв. ему paramaters из внешнего кода.
         Роутит по приватным методам класса, получает от них обработанные байты, и возвращает их обратно в внешний код.
         """
-        # TODO: type hinting for `parameters`. Many actions possible.
         audio: bytes = b''
         suffix: str = file_meta['suffix']
 
@@ -139,6 +197,9 @@ class AudioHandler:
 
         elif action == 'makevoice':
             audio = await self._make_voice(file, suffix, parameters)
+
+        elif action == 'makeopus':
+            audio = await self._make_opus(file, file_meta, suffix)
 
         else:
             log.error(f'Task handler for action: {action} is not implemented')

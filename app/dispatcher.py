@@ -32,7 +32,6 @@ class Dispatcher:
 
     async def dispatch(self, user_id: int, update: dict):
         with await self.redis as redis_conn:
-            log.debug(update)
             # Потому что у aioredis нет lock
             await redis_conn.set(f'{user_id}-lock', '1', expire=OPERATION_LOCK_TIMEOUT)
             try:
@@ -56,7 +55,7 @@ class Dispatcher:
         message = update.get('message')
         if message:
             if is_start_message(update):
-                log.debug(f'User {user_id} reset his task')
+                log.debug(f'User {user_id} sent /start. Reset his task.')
                 await self._clean_state(user_id)
                 await self.initiate_task(user_id)
                 return
@@ -122,6 +121,20 @@ class Dispatcher:
                     file, file_meta = await self.tg_api.download_file(audio_meta, 'audio')
                     await self.tg_api.upload_file(user_id, file, audio_meta, False, user_state.thumbnail_file)
                     await self.tg_api.send_message(user_id, 'Send next audio file or /start to start new action.')
+            if user_state.action == 'makeopus':
+                audio_meta: dict = self._get_tg_object(update, 'audio')
+                file, file_meta = await self.tg_api.download_file(audio_meta, 'audio')
+                audio_meta['suffix'] = file_meta.get('suffix')
+                opus_file: bytes = await self.audio.handle_file(
+                    file,
+                    audio_meta,
+                    user_state.action,
+                    user_state.time_range,
+                )
+                audio_meta['mime_type'] = 'audio/x-opus+ogg'
+                audio_meta['suffix'] = '.oga'
+                await self.tg_api.upload_file(user_id, opus_file, audio_meta, False)
+                await self.tg_api.send_message(user_id, 'Send next audio file or /start to start new action.')
 
         else:
             callback_query: dict = update.get('callback_query')
@@ -264,5 +277,6 @@ class Dispatcher:
 
     async def _handle_error(self, user_id: int, exc: SoundHoundError):
         """В случае SoundHound exception - отправляет юзеру в телеграм обязательный err_msg из него."""
+        log.debug(f'Error occured: {exc}, {exc.err_msg}, extra: {exc.extra}. Gonna send it to {user_id}')
         await self.tg_api.send_message(user_id, exc.err_msg)
-        log.debug(f'Error message sent: {exc.err_msg}, extra: {exc.extra}')
+        log.debug('Error sent to user.')

@@ -30,6 +30,11 @@ action_list: List[Action] = [
         'Set thumbnail as a cover for the audio file',
         'Send one photo',
     ),
+    Action(
+        'makeopus',
+        'Convert audio to Opus OGG format',
+        'Send audio file',
+    ),
 ]
 
 actions: Actions = Actions({x.name: x for x in action_list})

@@ -24,7 +24,7 @@ class WebhookHandler(View):
     Т.о. все входящие сообщения от этого пользователя во время действия lock отвергаются хэндлером.
     """
     @staticmethod
-    def validate_user(update_data: dict) -> Tuple[int, str]:
+    def validate_user(update_data: dict) -> int:
         """
         Успешная сериализация update в теории может не иметь информации об отправителе сообщения. Поэтому тут происходит
         поиск и валидация информации об отправителе сообщения в пришедшем от Telegram объекте update.
@@ -47,7 +47,8 @@ class WebhookHandler(View):
         if from_obj.get('is_bot'):
             raise UpdateValidationError('Bots are not allowed.', update_data)
 
-        return from_obj['id'], from_obj.get('username')
+        log.debug(f"User validated: {from_obj}")
+        return from_obj['id']
 
     @staticmethod
     def find_sender(data: dict) -> Optional[int]:
@@ -75,11 +76,6 @@ class WebhookHandler(View):
         """
         data: dict = await self.request.json()
 
-        if data.get('message'):
-            log.debug('Incoming Message')
-        else:
-            log.debug('Incoming Callback Query')
-
         try:
             update = Update().load(data)
         except ValidationError:
@@ -92,11 +88,9 @@ class WebhookHandler(View):
             log.exception('Marshmallow serialization failed.')
             return Response()
 
-        user_id: int
-        username: str
-        user_id, username = self.validate_user(update)
+        user_id: int = self.validate_user(update)
 
-        log.debug(f'Incoming message from {username} ({user_id})')
+        log.debug(f'Incoming message from {user_id}: {update}')
 
         with await self.request.app['redis'] as conn:
             if is_start_message(update):

@@ -57,7 +57,8 @@ class TelegramAPI:
     ) -> dict:
         """Внутренний метод реализующий запрос к Telegram API. Другие методы используют его. Кроме зарузки файла."""
         url: str = os.path.join(self.api_url, path)
-        log.debug(f'Request to TG API: {url}, params: {params}')
+        debug_extra: dict = {'url': url, 'params': params, 'with_data': True if form_data else False}
+        log.debug(f'Request to TG API: {debug_extra}')
         try:
             async with self.session.request(method=method, url=url, params=params, data=form_data) as response:
                 try:
@@ -65,9 +66,9 @@ class TelegramAPI:
                 except ContentTypeError:
                     raise TGApiError('Unable to parse response body', response)
         except (CancelledError, ClientConnectorError) as exc:
-            raise TGNetworkError('Request to Telegram API failed due to network issues.', exc)
+            raise TGNetworkError('Request to Telegram API failed due to network issues.', debug_extra, exc)
         except Exception as exc:
-            raise TGNetworkError('Request to Telegram API failed.', exc)
+            raise TGNetworkError('Request to Telegram API failed.', debug_extra, exc)
 
         if not resp.get('ok'):
             log.error(f"Telegram API returned error: {resp['error_code']}: {resp['description']}.")
