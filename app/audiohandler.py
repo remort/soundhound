@@ -233,7 +233,7 @@ class AudioHandler:
             file_meta: dict,
             action: str,
             parameters: Any,
-            pic: Optional[bytes],
+            pic: Optional[bytes] = None,
     ) -> bytes:
         """
         Публичный метод, принимающий action и соотв. ему paramaters из внешнего кода.
