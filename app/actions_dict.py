@@ -27,7 +27,12 @@ action_list: List[Action] = [
     ),
     Action(
         'thumbnail',
-        'Set thumbnail as a cover for the audio file',
+        'Set thumbnail for audio file via Telegram API',
+        'Send one photo',
+    ),
+    Action(
+        'setcover',
+        'Embed image into file as a front cover',
         'Send one photo',
     ),
     Action(

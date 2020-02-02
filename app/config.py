@@ -1,7 +1,7 @@
 import os
 from typing import Tuple
 
-from app.exceptions.api import ConfigurationError
+from app.exceptions.base import ConfigurationError
 
 DEBUGLEVELS: Tuple[str] = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
 DEBUGLEVEL: str = os.getenv('DEBUGLEVEL', 'DEBUG')
@@ -20,8 +20,6 @@ OPERATION_LOCK_TIMEOUT: int = 600
 SIZE_1MB: int = 1048576
 SIZE_20MB: int = 20971520
 SIZE_50MB: int = 52428800
-
-THUMB_EDGE_LIMIT: int = 320
 
 USAGE_INFO: str = """
 SoundHound bot.

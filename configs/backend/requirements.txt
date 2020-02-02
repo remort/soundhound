@@ -4,3 +4,4 @@ aioredis
 gunicorn
 marshmallow
 pillow
+mutagen

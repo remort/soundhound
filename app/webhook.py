@@ -1,13 +1,13 @@
 from aiojobs.aiohttp import spawn
 import logging
 from logging import Logger
-from typing import Optional, Tuple
+from typing import Optional
 
 from aiohttp.web import View, Response
 from marshmallow.exceptions import ValidationError
 
 from app.config import DEBUGLEVEL
-from app.exceptions.api import UpdateValidationError
+from app.exceptions.tg_api import UpdateValidationError
 from app.serializers.telegram import Update
 from app.utils import is_start_message
 
@@ -61,13 +61,6 @@ class WebhookHandler(View):
             if data['message'].get('from'):
                 if data['message']['from'].get('id'):
                     return data['message']['from']['id']
-
-    @staticmethod
-    def is_start(self, update):
-        if update.get('message'):
-            if update['message'].get('text') in ('/start', '/reset'):
-                return True
-        return False
 
     async def post(self) -> Response:
         """

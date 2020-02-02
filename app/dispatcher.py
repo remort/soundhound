@@ -9,7 +9,7 @@ from aioredis.commands import Redis
 from app.actions_dict import actions
 from app.audiohandler import AudioHandler
 from app.config import DEBUGLEVEL, OPERATION_LOCK_TIMEOUT, SIZE_1MB, USAGE_INFO
-from app.exceptions.api import (
+from app.exceptions.base import (
     ParametersValidationError,
     RoutingError,
     SoundHoundError,
@@ -41,6 +41,7 @@ class Dispatcher:
                 await self._handle_error(user_id, exc)
             except Exception as exc:
                 log.exception('Generic exception caught')
+                await self._handle_error(user_id, exc)
             finally:
                 await redis_conn.delete(f'{user_id}-lock')
                 log.debug(f'Message from user {user_id} handled')
@@ -76,8 +77,9 @@ class Dispatcher:
         if user_state.action:
             file: bytes
             file_meta: dict
+            action: str = user_state.action
 
-            if user_state.action in ('crop', 'makevoice'):
+            if action in ('crop', 'makevoice'):
                 if not user_state.time_range:
                     time_range: str = self._get_tg_object(update, 'text')
                     user_state.time_range = self._validate_time_range(time_range)
@@ -96,14 +98,14 @@ class Dispatcher:
                     mod_file: bytes = await self.audio.handle_file(
                         file,
                         file_meta,
-                        user_state.action,
+                        action,
                         user_state.time_range,
                     )
 
-                    as_voice: bool = True if user_state.action == 'makevoice' else False
+                    as_voice: bool = True if action == 'makevoice' else False
                     await self.tg_api.upload_file(user_id, mod_file, audio_meta, as_voice)
                     await self.tg_api.send_message(user_id, 'Send next audio file or /start to start new action.')
-            if user_state.action == 'thumbnail':
+            if action in ('thumbnail', 'setcover'):
                 if not user_state.thumbnail_file:
                     photo_meta: dict = self._get_tg_object(update, 'photo')
 
@@ -111,24 +113,32 @@ class Dispatcher:
                         raise ParametersValidationError('Telegram photo is empty or too large.', photo_meta)
 
                     file, meta = await self.tg_api.download_file(photo_meta, 'photo')
-                    file = resize_thumbnail(file, photo_meta['width'], photo_meta['height'])
                     user_state.thumbnail_file = file
+                    user_state.tg_thumbnail_file = resize_thumbnail(file, photo_meta['width'], photo_meta['height'])
                     await self._save_state(user_id, user_state)
                     await self.tg_api.send_message(user_id, 'Got thumbnail, send audio file, please.')
                 else:
                     audio_meta: dict = self._get_tg_object(update, 'audio')
 
                     file, file_meta = await self.tg_api.download_file(audio_meta, 'audio')
-                    await self.tg_api.upload_file(user_id, file, audio_meta, False, user_state.thumbnail_file)
+                    if action == 'setcover':
+                        file = await self.audio.handle_file(
+                            file,
+                            file_meta,
+                            action,
+                            None,
+                            user_state.thumbnail_file,
+                        )
+                    await self.tg_api.upload_file(user_id, file, audio_meta, False, user_state.tg_thumbnail_file)
                     await self.tg_api.send_message(user_id, 'Send next audio file or /start to start new action.')
-            if user_state.action == 'makeopus':
+            if action == 'makeopus':
                 audio_meta: dict = self._get_tg_object(update, 'audio')
                 file, file_meta = await self.tg_api.download_file(audio_meta, 'audio')
                 audio_meta['suffix'] = file_meta.get('suffix')
                 opus_file: bytes = await self.audio.handle_file(
                     file,
                     audio_meta,
-                    user_state.action,
+                    action,
                     user_state.time_range,
                 )
                 audio_meta['mime_type'] = 'audio/x-opus+ogg'
@@ -141,13 +151,13 @@ class Dispatcher:
             if not callback_query:
                 raise RoutingError('Button press expected', update)
 
-            action = update['callback_query'].get('data')
-            if not action:
+            new_action = update['callback_query'].get('data')
+            if not new_action:
                 raise RoutingError('Unable to parse button press.', update)
 
-            user_state.action = action
+            user_state.action = new_action
             await self._save_state(user_id, user_state)
-            await self._ask_action_parameters(user_id, action)
+            await self._ask_action_parameters(user_id, new_action)
 
     async def _send_action_list(self, user_id: int):
         """Начало диалога с юзером. Выслать action list-клавиатуру."""
@@ -275,8 +285,13 @@ class Dispatcher:
                 }
             )
 
-    async def _handle_error(self, user_id: int, exc: SoundHoundError):
+    async def _handle_error(self, user_id: int, exc: Union[SoundHoundError, Exception]):
         """В случае SoundHound exception - отправляет юзеру в телеграм обязательный err_msg из него."""
-        log.debug(f'Error occured: {exc}, {exc.err_msg}, extra: {exc.extra}. Gonna send it to {user_id}')
-        await self.tg_api.send_message(user_id, exc.err_msg)
+        if isinstance(exc, SoundHoundError):
+            log.debug(f'Error happened: {exc}, {exc.err_msg}, extra: {exc.extra}. Original exception:{exc.orig_exc}.')
+            log.debug(f'Gonna send error to {user_id}.')
+            await self.tg_api.send_message(user_id, exc.err_msg)
+        elif isinstance(exc, Exception):
+            log.debug(f'Generic exception happened: {exc}')
+            await self.tg_api.send_message(user_id, 'Generic error.')
         log.debug('Error sent to user.')

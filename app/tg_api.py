@@ -1,4 +1,4 @@
-from concurrent.futures._base import CancelledError
+from concurrent.futures import CancelledError
 from io import BytesIO
 import json
 import logging
@@ -17,12 +17,7 @@ from app.config import (
     SIZE_50MB,
     TOKEN,
 )
-from app.exceptions.api import (
-    FileSizeError,
-    TGApiError,
-    TGNetworkError,
-    FileError,
-)
+from app.exceptions.tg_api import FileError, TGApiError, TGNetworkError
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=DEBUGLEVEL)
@@ -68,6 +63,7 @@ class TelegramAPI:
         except (CancelledError, ClientConnectorError) as exc:
             raise TGNetworkError('Request to Telegram API failed due to network issues.', debug_extra, exc)
         except Exception as exc:
+            log.error(f'Telegram API request ended with unexpected exception: {exc}.')
             raise TGNetworkError('Request to Telegram API failed.', debug_extra, exc)
 
         if not resp.get('ok'):
@@ -123,7 +119,8 @@ class TelegramAPI:
         file_meta: dict = await self._request('getFile', method='post', params={'file_id': meta['file_id']})
         file_path: str = file_meta.get('file_path')
 
-        file_suffix: str = self.audio_suffix_mimetype_map.get(meta.get('mime_type'))
+        file_meta['mime_type'] = meta.get('mime_type')
+        file_suffix: str = self.audio_suffix_mimetype_map.get(file_meta['mime_type'])
         if not file_suffix:
             file_suffix = Path(file_path).suffix.lower()
             if not file_suffix:
@@ -175,7 +172,7 @@ class TelegramAPI:
         params: dict = {'chat_id': str(user_id), 'duration': int(file_meta.get('duration', 0))}
         # TODO: кажется на самом деле свыше около 20 МБ телеграм уже не принимает.
         if len(file_content) >= SIZE_50MB:
-            raise FileSizeError(
+            raise FileError(
                 f'Uploading file size limit exceeded. Size: {len(file_content)}, limit: {SIZE_50MB}',
                 {'size': len(file_content), 'limit': SIZE_50MB}
             )
@@ -183,14 +180,12 @@ class TelegramAPI:
         suffix: str = self.audio_suffix_mimetype_map[file_meta['mime_type']]
         performer: str = file_meta.get('performer', '')
         title: str = file_meta.get('title', '')
-        file_id: str = file_meta.get('file_id', '')
+        file_unique_id: str = file_meta.get('file_unique_id', '')
 
         if title and performer:
             filename: str = f'{performer}-{title}'
         else:
-            filename = Path(file_meta.get('file_name', '')).stem
-            if not filename:
-                filename = f'{file_id}'
+            filename = f'{file_unique_id}'
 
         form_data: FormData = FormData(quote_fields=False)
         if as_voice:

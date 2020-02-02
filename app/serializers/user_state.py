@@ -17,8 +17,8 @@ class UserStateModel:
     time_range: List[int] = field(default_factory=tuple)
     audio_metadata: Dict[str, Any] = field(default_factory=dict)
     audio_file: bytes = None
-    thumbnail_id: str = None
     thumbnail_file: bytes = None
+    tg_thumbnail_file: bytes = None
 
 
 class UserStateSchema(Schema):
@@ -28,5 +28,5 @@ class UserStateSchema(Schema):
     time_range = ListField(Integer(), required=False, allow_none=True)
     audio_metadata = DictField(keys=String(), values=String(), required=False, allow_none=True)
     audio_file = BytesField(required=False, allow_none=True)
-    thumbnail_id = String(required=False, allow_none=True)
     thumbnail_file = BytesField(required=False, allow_none=True)
+    tg_thumbnail_file = BytesField(required=False, allow_none=True)

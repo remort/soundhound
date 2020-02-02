@@ -1,9 +1,15 @@
 import asyncio
 from asyncio.subprocess import Process
+from io import BytesIO
 import logging
 import shutil
 from tempfile import NamedTemporaryFile
 from typing import Any, Optional, Tuple, Union
+
+from mutagen import File
+from mutagen.flac import FLAC, Picture
+from mutagen.id3 import APIC, ID3
+from mutagen.mp4 import MP4, MP4Cover
 
 from app.config import DEBUGLEVEL
 from app.exceptions.audio import (
@@ -11,6 +17,7 @@ from app.exceptions.audio import (
     ExecutableNotFoundError,
     SubprocessError,
 )
+from app.exceptions.base import NotImplementedYetError
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=DEBUGLEVEL)
@@ -180,7 +187,54 @@ class AudioHandler:
             '-c:a', 'libopus', '-b:a', output_bitrate, '-vbr', 'off', '-f', 'oga',
         )
 
-    async def handle_file(self, file: bytes, file_meta: dict, action: str, parameters: Any) -> bytes:
+    @staticmethod
+    def _set_cover_pic(audio: bytes, pic: bytes, suffix: str) -> bytes:
+        buf: BytesIO = BytesIO(audio)
+        buf.seek(0)
+
+        if suffix == '.flac':
+            audio_fo: FLAC = File(buf)
+            cover: Picture = Picture()
+            cover.type = 3
+            cover.data = pic
+            cover.mime = 'image/jpeg'
+            cover.desc = 'front cover'
+
+            audio_fo.clear_pictures()
+            audio_fo.add_picture(cover)
+        elif suffix == '.m4a':
+            audio_fo: MP4 = MP4(buf)
+            audio_fo['covr'] = [MP4Cover(pic, imageformat=MP4Cover.FORMAT_JPEG)]
+        elif suffix == '.mp3':
+            audio_fo: ID3 = ID3(buf)
+            for item in audio_fo.getall('APIC'):
+                if item.type == 3:
+                    audio_fo.delall(item.HashKey)
+            audio_fo['APIC'] = APIC(
+                encoding=3,
+                mime='image/jpeg',
+                type=3,
+                desc='Cover (front)',
+                data=pic,
+            )
+        else:
+            raise NotImplementedYetError(
+                'Embedding cover art is not supported for this type of file. Try to set Telegram API thumbnail instead.'
+            )
+
+        buf.seek(0)
+        audio_fo.save(buf)
+
+        return buf.getvalue()
+
+    async def handle_file(
+            self,
+            file: bytes,
+            file_meta: dict,
+            action: str,
+            parameters: Any,
+            pic: Optional[bytes],
+    ) -> bytes:
         """
         Публичный метод, принимающий action и соотв. ему paramaters из внешнего кода.
         Роутит по приватным методам класса, получает от них обработанные байты, и возвращает их обратно в внешний код.
@@ -188,7 +242,7 @@ class AudioHandler:
         audio: bytes = b''
         suffix: str = file_meta['suffix']
 
-        _format: str = file_meta['suffix'].replace('.', '')
+        _format: str = suffix.replace('.', '')
         if suffix in self.suffix_to_format:
             _format = self.suffix_to_format[suffix]
 
@@ -201,6 +255,8 @@ class AudioHandler:
         elif action == 'makeopus':
             audio = await self._make_opus(file, file_meta, suffix)
 
+        elif action == 'setcover':
+            audio = self._set_cover_pic(file, pic, suffix)
         else:
             log.error(f'Task handler for action: {action} is not implemented')
 
