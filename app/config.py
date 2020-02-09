@@ -31,6 +31,7 @@ Type something to call a dog (doc) or use a /start command and you'll get Action
 - *Cut audio files* by specified period of time in seconds, returning a fragment of the same format.
 - Same, returning Telegram *Voice message*.
 - *Set thumbnail* for an audio file. Thumbnail shows in Telegram only and not being placed into your file.
+- *Set cover*. Same as above with also including a picture inside audio file as front cover.
 - Convert audio file to *Opus OGG* format as, by far, most advanced audio format. 
 
 Audio file can be either of `MP3`, `FLAC`, `OGG`, `WAV` or `M4A` format and get received by Sound Hound one by one.
