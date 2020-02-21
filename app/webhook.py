@@ -1,9 +1,9 @@
-from aiojobs.aiohttp import spawn
 import logging
 from logging import Logger
 from typing import Optional
 
-from aiohttp.web import View, Response
+from aiohttp.web import Response, View
+from aiojobs.aiohttp import spawn
 from marshmallow.exceptions import ValidationError
 
 from app.config import DEBUGLEVEL
@@ -83,7 +83,7 @@ class WebhookHandler(View):
 
         user_id: int = self.validate_user(update)
 
-        log.debug(f'Incoming message from {user_id}: {update}')
+        log.debug(f'Incoming message from {user_id}: {update}\n')
 
         with await self.request.app['redis'] as conn:
             if is_start_message(update):

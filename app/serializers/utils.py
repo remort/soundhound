@@ -1,6 +1,11 @@
 from datetime import datetime
+import logging
+from logging import Logger
 
 from marshmallow.fields import DateTime, Field, ValidationError
+
+log: Logger = logging.getLogger(__name__)
+logging.basicConfig(level='debug')
 
 
 class Timestamp(DateTime):

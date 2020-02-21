@@ -24,24 +24,30 @@ logging.basicConfig(level=DEBUGLEVEL)
 
 
 class TelegramAPI:
+    audio_suffix_mimetype_map = {
+        'audio/mpeg': '.mp3',
+        'audio/x-opus+ogg': '.ogg',
+        'audio/ogg': '.oga',
+        'audio/mp4': '.m4a',
+        'audio/flac': '.flac',
+        'audio/x-flac': '.flac',
+        'audio/x-wav': '.wav',
+    }
+    picture_suffix_mimetype_map = {
+        'image/jpeg': '.jpg',
+        'image/png': '.png',
+    }
+    # TODO: добавить пооддержку других популярных видеоформатов.
+    video_suffix_mimetype_map = {
+        'video/mp4': '.mp4',
+        'video/x-msvideo': '.avi',
+    }
+    webhook_url: str = f'https://{SERVER_NAME}:{PUBLIC_PORT}/webhook/'
+    token: str = TOKEN
+    api_url: str = f'https://api.telegram.org/bot{TOKEN}/'
+
     def __init__(self, http_client_session: ClientSession):
-        self.token: str = TOKEN
-        self.api_url: str = f'https://api.telegram.org/bot{self.token}/'
         self.session: ClientSession = http_client_session
-        self.webhook_url: str = f'https://{SERVER_NAME}:{PUBLIC_PORT}/webhook/'
-        self.audio_suffix_mimetype_map = {
-            'audio/mpeg': '.mp3',
-            'audio/x-opus+ogg': '.ogg',
-            'audio/ogg': '.oga',
-            'audio/mp4': '.m4a',
-            'audio/flac': '.flac',
-            'audio/x-flac': '.flac',
-            'audio/x-wav': '.wav',
-        }
-        self.picture_suffix_mimetype_map = {
-            'image/jpeg': '.jpg',
-            'image/png': '.png',
-        }
 
     async def _request(
             self,
@@ -133,6 +139,8 @@ class TelegramAPI:
             supported_suffixes = self.audio_suffix_mimetype_map.values()
         if file_type == 'photo':
             supported_suffixes = self.picture_suffix_mimetype_map.values()
+        if file_type == 'video':
+            supported_suffixes = self.video_suffix_mimetype_map.values()
 
         if file_meta['suffix'] not in supported_suffixes:
             raise FileError(
@@ -149,12 +157,11 @@ class TelegramAPI:
         try:
             async with self.session.get(url) as response:
                 buf.write(await response.read())
-                buf.seek(0)
         except Exception as exc:
             buf.close()
             raise TGNetworkError('Receiving file content is failed.', file_meta, exc)
 
-        return buf.read(), file_meta
+        return buf.getvalue(), file_meta
 
     async def upload_file(
             self,
@@ -206,3 +213,10 @@ class TelegramAPI:
                 form_data.add_field('thumb', thumbnail, filename=f"thumb.jpeg", content_type='image/jpeg')
 
         return await self._request(path, params=params, form_data=form_data)
+
+    async def upload_roundy(self, user_id: int, video: bytes, duration: int, radius: int):
+        params: dict = {'chat_id': str(user_id), 'duration': duration, 'length': radius}
+        form_data: FormData = FormData(quote_fields=False)
+        filename: str = 'roundy'
+        form_data.add_field('video_note', video, filename=f"{filename}.mp4", content_type='video/mp4')
+        return await self._request('sendVideoNote', params=params, form_data=form_data)

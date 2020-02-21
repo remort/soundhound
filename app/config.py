@@ -21,6 +21,9 @@ SIZE_1MB: int = 1048576
 SIZE_20MB: int = 20971520
 SIZE_50MB: int = 52428800
 
+# Опытным путем установил что радиус (length) может быть max: 637px, min: 100px
+VIDEO_NOTE_MAX_RADIUS: int = 600
+
 USAGE_INFO: str = """
 SoundHound bot.
 
@@ -32,14 +35,18 @@ Type something to call a dog (doc) or use a /start command and you'll get Action
 - Same, returning Telegram *Voice message*.
 - *Set thumbnail* for an audio file. Thumbnail shows in Telegram only and not being placed into your file.
 - *Set cover*. Same as above with also including a picture inside audio file as front cover.
-- Convert audio file to *Opus OGG* format as, by far, most advanced audio format. 
+- Convert audio files to *Opus OGG* format as, by far, most advanced audio format.
+- Make short telegram *rounded clips* (VideoNotes), cutting a minute-long fragments from your videos.
 
-Audio file can be either of `MP3`, `FLAC`, `OGG`, `WAV` or `M4A` format and get received by Sound Hound one by one.
+Audio file can be either of `MP3`, `FLAC`, `OGG`, `WAV` or `M4A` format.
+Only MP4 and AVI videos are supported by now.
+Files get received by Sound Hound one by one.
 
 Thumbnail picture can be any photo acceptable by Telegram in any reasonable dimensions.
 It'll be converted to 1:1 320x320 JPEG if needed.
 
 /info shows this message.
+/start or /reset initiate new task. 
 
 Feedback: @redahead.
 """

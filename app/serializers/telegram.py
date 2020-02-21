@@ -109,7 +109,15 @@ class Document(Schema):
 
 
 class Animation(Schema):
-    pass
+    file_id = String()
+    file_unique_id = String()
+    width = Integer(required=False)
+    height = Integer(required=False)
+    duration = Integer(required=False)
+    thumb = Nested(PhotoSize, required=False)
+    file_name = String(required=False)
+    mime_type = String(required=False)
+    file_size = Integer(required=False)
 
 
 class Game(Schema):
@@ -121,7 +129,14 @@ class Sticker(Schema):
 
 
 class Video(Schema):
-    pass
+    file_id = String()
+    file_unique_id = String()
+    width = Integer(required=False)
+    height = Integer(required=False)
+    duration = Integer(required=False)
+    thumb = Nested(PhotoSize, required=False)
+    mime_type = String(required=False)
+    file_size = Integer(required=False)
 
 
 class VideoNote(Schema):

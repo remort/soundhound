@@ -2,7 +2,7 @@ from app.exceptions.base import SoundHoundError
 
 
 class AudioHandlerError(SoundHoundError):
-    """Выбрасывается при общих ошибках в коде audiohandler.py."""
+    """Выбрасывается при общих ошибках в коде mediahandler.py."""
     def __init__(self, err_msg: str, extra: dict):
         super(AudioHandlerError, self).__init__(self, err_msg, extra)
 
